@@ -4,8 +4,9 @@ The original knob prises off its stem. This goes on in its place: the top
 half keeps the look of the original (white, fluted, rounded top edge) so it
 still turns by hand and still reads as an Etch A Sketch, and the bottom half,
 nearest the frame, is a GT2 tooth band between two flanges. The knob head is
-the outer flange. Belt runs to a stepper with a 20T pulley; at 40T here that
-is 2:1 down, which helps both torque and resolution.
+the outer flange. Belt runs 1:1 to a stepper wearing the --motor twin of
+this knob (Sui, 12 Oct: direct drive is proven on NEMA 17s, and 3200 steps
+a turn is far finer than the line an EaS draws).
 
 DIMENSIONS ARE GUESSES until the EaS arrives. The only number anyone has
 published is the stem, 3/16" (4.76 mm), from two independent builds. Knob
@@ -18,9 +19,18 @@ not seen), plus an optional M3 grub tapped straight into the plastic.
 Printed frame-side flange down on the bed, no supports. The only overhang is
 the knob head's underside ledge over the tooth tips (about 1.5 mm).
 
-    python tools/etchatron_knob.py [--teeth 40] [--head-od 28] [--stem 4.76] ...
+--motor builds the twin that goes on the stepper. Drive is 1:1, so the motor
+wears the same knob it turns: same head, same tooth band, and only the bore
+differs. 5 mm D-bore with the flat facing an M3 grub tapped into the head
+between two flutes; no nut trap, because its slot would have to open through
+the top face and break the twin. The flat carries the torque, the grub only
+stops it walking. The bore is blind and the knob pushes on until it bottoms
+on the shaft tip, so where it sits is set by the shaft length, not by eye.
 
-Writes etchatron/knob/knob_gt2_<N>t.stl, claims_<N>t.json and a render.
+    python tools/etchatron_knob.py [--teeth 40] [--head-od 28] [--stem 4.76] ...
+    python tools/etchatron_knob.py --motor [--shaft-len 24] ...
+
+Writes etchatron/knob/knob[_motor]_gt2_<N>t.stl, claims and a render.
 Exits 1 if any claim fails.
 """
 
@@ -82,9 +92,13 @@ def build(a):
         c.apply_translation([rf * math.cos(th), rf * math.sin(th), (fz0 + fz1) / 2])
         cuts.append(c)
 
-    # blind round bore from the frame side
+    # blind bore from the frame side; on the motor knob a D, flat facing +x
     bore = trimesh.creation.cylinder(radius=a.bore / 2, height=a.bore_depth + 1, sections=64)
     bore.apply_translation([0, 0, (a.bore_depth - 1) / 2])
+    if a.motor:
+        keep = trimesh.creation.box(extents=[a.bore, a.bore * 2, a.bore_depth + 4])
+        keep.apply_translation([a.flat_at - a.bore / 2, 0, a.bore_depth / 2])
+        bore = trimesh.boolean.intersection([bore, keep], engine="manifold")
     cuts.append(bore)
 
     # optional M3 grub, radial along +x, tapped into the plastic, in the head
@@ -97,6 +111,10 @@ def build(a):
         cuts.append(g)
 
     part = trimesh.boolean.difference([body] + cuts, engine="manifold")
+    dims = dict(pd=pd, r_tip=r_tip, rc=rc, z_teeth0=z_teeth0, z_teeth1=z_teeth1,
+                z_head0=z_head0, z_top=z_top, zg=zg, rf=rf)
+    if a.motor:
+        return part, dims
 
     # crush ribs added back into the bore, clear of the grub
     ribs = []
@@ -113,16 +131,13 @@ def build(a):
     rib = trimesh.boolean.difference([trimesh.boolean.union(ribs, engine="manifold"), lead],
                                      engine="manifold")
     part = trimesh.boolean.union([part, rib], engine="manifold")
-
-    dims = dict(pd=pd, r_tip=r_tip, rc=rc, z_teeth0=z_teeth0, z_teeth1=z_teeth1,
-                z_head0=z_head0, z_top=z_top, zg=zg, rf=rf)
     return part, dims
 
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--teeth", type=int, default=40,
-                   help="40T: pitch dia 25.5, close to the knob, 2:1 off a 20T motor pulley")
+                   help="40T: pitch dia 25.5, close to the knob; same on both ends, 1:1")
     p.add_argument("--head-od", type=float, default=28.0, help="GUESS, measure the original")
     p.add_argument("--head-h", type=float, default=11.0, help="GUESS, original knob height")
     p.add_argument("--edge-r", type=float, default=2.0, help="rounded top edge")
@@ -146,6 +161,12 @@ def parser():
     p.add_argument("--grub", type=float, default=2.6,
                    help="M3 tapping hole; 0 for no grub")
     p.add_argument("--grub-up", type=float, default=1.5, help="grub height above head base")
+    p.add_argument("--motor", action="store_true",
+                   help="the stepper twin: D-bore, no ribs; changes the bore defaults")
+    p.add_argument("--flat-at", type=float, default=2.05, help="D flat, mm from the axis")
+    p.add_argument("--shaft-len", type=float, default=24.0,
+                   help="GUESS, shaft length out from the motor face; 42-40s vary, measure")
+    p.add_argument("--boss-h", type=float, default=2.0, help="NEMA 17 front boss height")
     p.add_argument("--facets", type=int, default=180)
     # thresholds
     p.add_argument("--min-flange-over-belt", type=float, default=0.8,
@@ -153,14 +174,32 @@ def parser():
     p.add_argument("--min-grip", type=float, default=0.1,
                    help="rib interference on the stem, diameter")
     p.add_argument("--min-wall", type=float, default=1.5, help="plastic over the bore end")
+    p.add_argument("--min-boss-gap", type=float, default=0.8,
+                   help="frame flange must clear the motor boss by this much")
     return p
 
 
+MOTOR_DEFAULTS = dict(bore=5.25, bore_depth=16.0, grub_up=4.0)
+
+
+def parse(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    a = parser().parse_args(argv)
+    if a.motor:
+        # motor defaults, unless that flag was given explicitly
+        given = {x.split("=")[0] for x in argv}
+        for k, v in MOTOR_DEFAULTS.items():
+            if "--" + k.replace("_", "-") not in given:
+                setattr(a, k, v)
+    return a
+
+
 def main():
-    a = parser().parse_args()
+    a = parse()
     part, d = build(a)
-    C = hc.Claims("etchatron knob, GT2 %dT, head %.0f mm, %d flutes"
-                  % (a.teeth, a.head_od, a.flutes))
+    kind = "motor knob" if a.motor else "knob"
+    C = hc.Claims("etchatron %s, GT2 %dT, head %.0f mm, %d flutes"
+                  % (kind, a.teeth, a.head_od, a.flutes))
 
     hc.closed_volume(C, part, "knob")
     hc.single_body(C, part, "knob", floor=50.0)
@@ -192,11 +231,26 @@ def main():
     C.require("tooth count measured on the mesh", edges == a.teeth,
               "%d grooves found round the band, %d asked" % (edges, a.teeth))
 
-    grip = a.stem - a.rib_id
-    C.require("ribs grip the stem", grip >= a.min_grip,
-              "%.2f mm interference on a %.2f stem" % (grip, a.stem))
-    C.require("bore clears the stem between ribs", a.bore > a.stem + 0.3,
-              "%.2f bore, %.2f stem" % (a.bore, a.stem))
+    if a.motor:
+        # the flat measured on the mesh: solid just past it at +x, open elsewhere
+        zc = a.bore_depth / 2
+        pr = part.contains(np.array([[a.flat_at + 0.15, 0, zc], [-(a.bore / 2 - 0.15), 0, zc],
+                                     [0, a.bore / 2 - 0.15, zc]]))
+        C.require("D flat on the mesh, facing the grub", pr[0] and not pr[1] and not pr[2],
+                  "flat %.2f from axis, round side open to %.2f" % (a.flat_at, a.bore / 2))
+        gap = a.shaft_len - a.bore_depth
+        C.require("knob clears the motor boss", gap >= a.boss_h + a.min_boss_gap,
+                  "bottoms on the shaft %.1f off the motor face, boss %.1f (shaft %.1f GUESS)"
+                  % (gap, a.boss_h, a.shaft_len))
+        C.note("belt line", "belt centre %.1f mm off the motor face; the EaS knob belt "
+               "centre must match, set by the motor mount"
+               % (gap + d["z_teeth0"] + a.tooth_width / 2))
+    else:
+        grip = a.stem - a.rib_id
+        C.require("ribs grip the stem", grip >= a.min_grip,
+                  "%.2f mm interference on a %.2f stem" % (grip, a.stem))
+        C.require("bore clears the stem between ribs", a.bore > a.stem + 0.3,
+                  "%.2f bore, %.2f stem" % (a.bore, a.stem))
     probe = np.array([[0, 0, a.bore_depth - 0.5], [0, 0, a.bore_depth + a.min_wall - 0.05]])
     inside = part.contains(probe)
     C.require("bore is open to its depth, closed above", (not inside[0]) and inside[1],
@@ -210,15 +264,16 @@ def main():
     C.note("guesses", "head OD, head height, flute count and stem length are not measured yet")
     C.note("print", "frame flange down, no supports; head underside overhangs the tips",
            overhang_mm=round(a.head_od / 2 - d["r_tip"], 2), height_mm=round(d["z_top"], 2))
-    C.note("drive", "pitch dia %.2f mm, %.1f mm of belt per turn; 2:1 off a 20T"
+    C.note("drive", "pitch dia %.2f mm, %.1f mm of belt per turn; 1:1, knob and motor twins"
            % (d["pd"], a.teeth * PITCH))
 
     os.makedirs(OUT, exist_ok=True)
-    stl = os.path.join(OUT, "knob_gt2_%dt.stl" % a.teeth)
+    stem = ("knob_motor_gt2_%dt" if a.motor else "knob_gt2_%dt") % a.teeth
+    stl = os.path.join(OUT, stem + ".stl")
     part.export(stl)
-    render(part, d, a, os.path.join(OUT, "knob_gt2_%dt.png" % a.teeth))
+    render(part, d, a, os.path.join(OUT, stem + ".png"))
     print("  wrote %s" % stl)
-    return 0 if C.report(os.path.join(OUT, "claims_%dt.json" % a.teeth)) else 1
+    return 0 if C.report(os.path.join(OUT, "claims_%s.json" % stem)) else 1
 
 
 def _shade(ax, mesh, colour, light=(0.4, -0.6, 0.7)):
@@ -251,11 +306,13 @@ def render(part, d, a, path):
         ax.fill(e[:, 0], e[:, 1], color="#1f77ff", alpha=0.35)
         ax.plot(e[:, 0], e[:, 1], color="#0040c0", lw=1.0)
     t = np.linspace(0, 2 * np.pi, 200)
-    ax.plot(a.stem / 2 * np.cos(t), a.stem / 2 * np.sin(t), color="#e00000", lw=1.2, ls="--")
+    shaft_d = 5.0 if a.motor else a.stem
+    ax.plot(shaft_d / 2 * np.cos(t), shaft_d / 2 * np.sin(t), color="#e00000", lw=1.2, ls="--")
     ax.plot(a.head_od / 2 * np.cos(t), a.head_od / 2 * np.sin(t), color="black", lw=0.8, ls=":")
     ax.set_aspect("equal"); ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim)
-    ax.set_title("plan through the belt band: %d teeth, 3 crush ribs on the stem" % a.teeth,
-                 color="black")
+    ax.set_title("plan through the belt band: %d teeth, %s" % (
+        a.teeth, "5 mm D-bore, flat to the grub" if a.motor else "3 crush ribs on the stem"),
+        color="black")
     ax.tick_params(colors="black")
 
     ax2 = fig.add_subplot(1, 3, 3)
@@ -267,11 +324,13 @@ def render(part, d, a, path):
         x0, x1 = sorted((sx * (d["r_tip"] - GROOVE_DEPTH), sx * (a.head_od / 2 + 1)))
         ax2.fill_between([x0, x1], d["z_teeth0"], d["z_teeth1"], color="#ffb000", alpha=0.35)
     ax2.text(d["r_tip"] + 0.5, d["z_teeth1"] + 0.6, "6 mm belt", color="black", fontsize=10)
-    ax2.plot([-a.stem / 2, -a.stem / 2, a.stem / 2, a.stem / 2],
+    ax2.plot([-shaft_d / 2, -shaft_d / 2, shaft_d / 2, shaft_d / 2],
              [-3, a.bore_depth, a.bore_depth, -3], color="#e00000", lw=1.5, ls="--")
-    ax2.text(a.stem / 2 + 0.5, -2, "stem %.2f" % a.stem, color="#e00000", fontsize=10)
+    ax2.text(shaft_d / 2 + 0.5, -2, "motor shaft 5" if a.motor else "stem %.2f" % a.stem,
+             color="#e00000", fontsize=10)
     ax2.axhline(0, color="black", lw=2)
-    ax2.text(-lim, -0.8, "frame side", color="black", fontsize=10, va="top")
+    ax2.text(-lim, -0.8, "motor side" if a.motor else "frame side", color="black",
+             fontsize=10, va="top")
     ax2.set_aspect("equal")
     ax2.set_title("section, OD %.0f, %.1f tall" % (a.head_od, d["z_top"]), color="black")
     ax2.set_xlabel("mm", color="black"); ax2.tick_params(colors="black")

@@ -1,0 +1,142 @@
+{
+  "subject": "etchatron motor knob, GT2 40T, head 28 mm, 24 flutes",
+  "passed": true,
+  "claims": [
+    {
+      "claim": "knob is a closed volume",
+      "kind": "require",
+      "passed": true,
+      "detail": "watertight=True winding=True vol=+10.3 cm3 open edges=0",
+      "facts": {
+        "watertight": true,
+        "winding_consistent": true,
+        "volume_cm3": 10.252,
+        "open_edges": 0
+      }
+    },
+    {
+      "claim": "knob is one connected body",
+      "kind": "require",
+      "passed": true,
+      "detail": "1 bodies over 0.1 cm3, volumes [10.3] cm3",
+      "facts": {
+        "body_count": 1,
+        "body_volumes_cm3": [
+          10.3
+        ]
+      }
+    },
+    {
+      "claim": "knob survives being written",
+      "kind": "require",
+      "passed": true,
+      "detail": "written and read back: watertight=True bodies=1 volume moved 0.000 cm3",
+      "facts": {
+        "watertight": true,
+        "body_count": 1,
+        "volume_delta_cm3": 0.0
+      }
+    },
+    {
+      "claim": "belt fits between the flanges",
+      "kind": "require",
+      "passed": true,
+      "detail": "7.0 mm for a 6 mm belt",
+      "facts": {}
+    },
+    {
+      "claim": "frame flange stands beyond the belt back",
+      "kind": "require",
+      "passed": true,
+      "detail": "1.89 mm past the belt back (floor 0.80)",
+      "facts": {}
+    },
+    {
+      "claim": "knob head stands beyond the belt back",
+      "kind": "require",
+      "passed": true,
+      "detail": "0.89 mm past the belt back (floor 0.80)",
+      "facts": {}
+    },
+    {
+      "claim": "head OD measured on the mesh",
+      "kind": "require",
+      "passed": true,
+      "detail": "28.00 mm (frame flange 30.00)",
+      "facts": {}
+    },
+    {
+      "claim": "tooth count measured on the mesh",
+      "kind": "require",
+      "passed": true,
+      "detail": "40 grooves found round the band, 40 asked",
+      "facts": {}
+    },
+    {
+      "claim": "D flat on the mesh, facing the grub",
+      "kind": "require",
+      "passed": true,
+      "detail": "flat 2.05 from axis, round side open to 2.62",
+      "facts": {}
+    },
+    {
+      "claim": "knob clears the motor boss",
+      "kind": "require",
+      "passed": true,
+      "detail": "bottoms on the shaft 8.0 off the motor face, boss 2.0 (shaft 24.0 GUESS)",
+      "facts": {}
+    },
+    {
+      "claim": "belt line",
+      "kind": "note",
+      "passed": null,
+      "detail": "belt centre 12.9 mm off the motor face; the EaS knob belt centre must match, set by the motor mount",
+      "facts": {}
+    },
+    {
+      "claim": "bore is open to its depth, closed above",
+      "kind": "require",
+      "passed": true,
+      "detail": "16.0 deep, 3.4 mm over it",
+      "facts": {}
+    },
+    {
+      "claim": "grub lands in the bore",
+      "kind": "require",
+      "passed": true,
+      "detail": "grub at z 12.4, bore to 16.0",
+      "facts": {}
+    },
+    {
+      "claim": "grub sits between flutes or in the plain band",
+      "kind": "require",
+      "passed": true,
+      "detail": "z 12.4",
+      "facts": {}
+    },
+    {
+      "claim": "guesses",
+      "kind": "note",
+      "passed": null,
+      "detail": "head OD, head height, flute count and stem length are not measured yet",
+      "facts": {}
+    },
+    {
+      "claim": "print",
+      "kind": "note",
+      "passed": null,
+      "detail": "frame flange down, no supports; head underside overhangs the tips",
+      "facts": {
+        "overhang_mm": 1.52,
+        "height_mm": 19.4
+      }
+    },
+    {
+      "claim": "drive",
+      "kind": "note",
+      "passed": null,
+      "detail": "pitch dia 25.46 mm, 80.0 mm of belt per turn; 1:1, knob and motor twins",
+      "facts": {}
+    }
+  ]
+}

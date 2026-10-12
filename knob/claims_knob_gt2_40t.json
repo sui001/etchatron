@@ -128,7 +128,7 @@
       "claim": "drive",
       "kind": "note",
       "passed": null,
-      "detail": "pitch dia 25.46 mm, 80.0 mm of belt per turn; 2:1 off a 20T",
+      "detail": "pitch dia 25.46 mm, 80.0 mm of belt per turn; 1:1, knob and motor twins",
       "facts": {}
     }
   ]
