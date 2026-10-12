@@ -45,11 +45,15 @@ SETTINGS = [
     ("$120", "720",    "X accel deg/s^2"),
     ("$121", "720",    "Y accel deg/s^2"),
 
-    # DIR INVERT MASK, bit 0 = X, bit 1 = Y. Unchecked. Genarm found every
-    # axis backwards under GRBL, but that was relative to its old firmware,
-    # not a law. Measure each knob on the bench: + should move the stylus
-    # right (X) and up (Y).
-    ("$3",   "0",      "dir invert: UNCHECKED, measure each axis"),
+    # DIR INVERT MASK, bit 0 = X, bit 1 = Y. + should move the stylus right
+    # (X) and up (Y); on an EaS both of those are the knob turning CLOCKWISE.
+    # A belt keeps the sense, so motor clockwise = knob clockwise, PROVIDED
+    # the motor shaft faces out of the board like the knob (the 1:1 twin
+    # layout). Mount a motor shaft-backwards and its bit flips.
+    #
+    # X: +90 turned clockwise seen from the shaft end, 2026-10-12. Correct.
+    # Y: unchecked, its driver did not drive (shaft not holding) on the same day.
+    ("$3",   "0",      "dir invert: X checked clockwise-positive, Y unchecked"),
     ("$4",   "0",      "step enable invert: shield enable is active low already"),
 
     ("$20",  "0",      "soft limits off, they need homing and there are no endstops"),
