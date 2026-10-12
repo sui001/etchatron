@@ -9,6 +9,9 @@ sort of thing that gets typed into a terminal once and lost. This is the record.
 
 Board: Uno + Protoneer CNC Shield V3, BTT TMC2209s standalone, Creality 42-40s.
 Firmware: gnea/grbl 1.1h (grbl_v1.1h.20190825.hex), flashed 2026-10-12.
+Supply: 12 V with the current limit at 2 A or more. On a limited bench supply
+the second axis starves and sits there with a faint drag, which looks exactly
+like a dead driver (2026-10-12, cost a driver swap to find).
 
 X = horizontal knob (left), Y = vertical knob (right). Drive is 1:1, the
 motor wears a twin of the knob, so a motor turn is a knob turn.
@@ -51,9 +54,9 @@ SETTINGS = [
     # the motor shaft faces out of the board like the knob (the 1:1 twin
     # layout). Mount a motor shaft-backwards and its bit flips.
     #
-    # X: +90 turned clockwise seen from the shaft end, 2026-10-12. Correct.
-    # Y: unchecked, its driver did not drive (shaft not holding) on the same day.
-    ("$3",   "0",      "dir invert: X checked clockwise-positive, Y unchecked"),
+    # Both checked 2026-10-12: +360 turned each one clockwise seen from the
+    # shaft end. Correct as they are.
+    ("$3",   "0",      "dir invert: none, both checked clockwise-positive"),
     ("$4",   "0",      "step enable invert: shield enable is active low already"),
 
     ("$20",  "0",      "soft limits off, they need homing and there are no endstops"),
