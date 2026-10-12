@@ -165,7 +165,7 @@ def parser():
                    help="the stepper twin: D-bore, no ribs; changes the bore defaults")
     p.add_argument("--flat-at", type=float, default=2.05, help="D flat, mm from the axis")
     p.add_argument("--shaft-len", type=float, default=24.0,
-                   help="GUESS, shaft length out from the motor face; 42-40s vary, measure")
+                   help="shaft length out from the motor face; measured X 15, Y 24 (12 Oct)")
     p.add_argument("--boss-h", type=float, default=2.0, help="NEMA 17 front boss height")
     p.add_argument("--facets", type=int, default=180)
     # thresholds
@@ -179,18 +179,28 @@ def parser():
     return p
 
 
-MOTOR_DEFAULTS = dict(bore=5.25, bore_depth=16.0, grub_up=4.0)
+MOTOR_BORE = 5.25
+MOTOR_SEAT_GAP = 3.0        # knob flange off the motor face: boss 2 + clearance
+MOTOR_MAX_DEPTH = 16.0      # leaves 3.4 mm of top over the shaft tip
 
 
 def parse(argv=None):
+    """Motor mode derives bore depth and grub height from --shaft-len, so the
+    one number measured on each motor is the only one passed. The two 42-40s
+    here differ (X 15 mm, Y 24 mm, 12 Oct), so one motor knob does not fit both.
+    A flag given explicitly always wins."""
     argv = sys.argv[1:] if argv is None else argv
     a = parser().parse_args(argv)
     if a.motor:
-        # motor defaults, unless that flag was given explicitly
         given = {x.split("=")[0] for x in argv}
-        for k, v in MOTOR_DEFAULTS.items():
-            if "--" + k.replace("_", "-") not in given:
-                setattr(a, k, v)
+        if "--bore" not in given:
+            a.bore = MOTOR_BORE
+        if "--bore-depth" not in given:
+            a.bore_depth = min(MOTOR_MAX_DEPTH, a.shaft_len - MOTOR_SEAT_GAP)
+        if "--grub-up" not in given:
+            # as high as it can go and still land on shaft with 0.8 to spare
+            z_head0 = a.flange_t + a.tooth_width
+            a.grub_up = min(4.0, a.bore_depth - a.grub / 2 - 0.8 - z_head0)
     return a
 
 
@@ -239,8 +249,8 @@ def main():
         C.require("D flat on the mesh, facing the grub", pr[0] and not pr[1] and not pr[2],
                   "flat %.2f from axis, round side open to %.2f" % (a.flat_at, a.bore / 2))
         gap = a.shaft_len - a.bore_depth
-        C.require("knob clears the motor boss", gap >= a.boss_h + a.min_boss_gap,
-                  "bottoms on the shaft %.1f off the motor face, boss %.1f (shaft %.1f GUESS)"
+        C.require("knob clears the motor boss", gap >= a.boss_h + a.min_boss_gap - 1e-9,
+                  "bottoms on the shaft %.1f off the motor face, boss %.1f, shaft %.1f"
                   % (gap, a.boss_h, a.shaft_len))
         C.note("belt line", "belt centre %.1f mm off the motor face; the EaS knob belt "
                "centre must match, set by the motor mount"
@@ -268,7 +278,8 @@ def main():
            % (d["pd"], a.teeth * PITCH))
 
     os.makedirs(OUT, exist_ok=True)
-    stem = ("knob_motor_gt2_%dt" if a.motor else "knob_gt2_%dt") % a.teeth
+    stem = ("knob_motor_gt2_%dt_shaft%g" % (a.teeth, a.shaft_len) if a.motor
+            else "knob_gt2_%dt" % a.teeth)
     stl = os.path.join(OUT, stem + ".stl")
     part.export(stl)
     render(part, d, a, os.path.join(OUT, stem + ".png"))
