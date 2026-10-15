@@ -13,8 +13,9 @@ Supply: 12 V with the current limit at 2 A or more. On a limited bench supply
 the second axis starves and sits there with a faint drag, which looks exactly
 like a dead driver (2026-10-12, cost a driver swap to find).
 
-X = horizontal knob (left), Y = vertical knob (right). Drive is 1:1, the
-motor wears a twin of the knob, so a motor turn is a knob turn.
+X = horizontal knob (left), Y = vertical knob (right). Drive is 1.5:1
+(15 Oct): the motor wears the 40T knob twin, the EaS keeps its own knob and
+wears the 60T over-knob pulley, so 1.5 motor turns make one knob turn.
 
 UNITS ARE KNOB DEGREES for now, not mm. Stylus travel per knob turn is
 unknown until the Etch A Sketch arrives; when it is measured, $100/$101
@@ -34,15 +35,16 @@ except ImportError:
 # third lands on PDN_UART; high there turns OFF standstill current reduction,
 # so idle motors sit at full current. $1=25 below lets them go limp instead.
 MICROSTEP = 16
-STEPS_PER_DEG = 200 * MICROSTEP / 360.0      # 8.889, 1:1 belt
+MOTOR_T, KNOB_T = 40, 60                     # knob_motor_gt2_40t -> knob_over_gt2_60t
+STEPS_PER_DEG = 200 * MICROSTEP * KNOB_T / MOTOR_T / 360.0   # 13.333, 1.5:1 belt
 
 # (setting, value, why). steps/unit before rates, so a rate is never briefly
 # interpreted against the wrong scale.
 SETTINGS = [
-    ("$100", "%.3f" % STEPS_PER_DEG, "X knob steps/deg  1/16, 1:1 belt"),
-    ("$101", "%.3f" % STEPS_PER_DEG, "Y knob steps/deg  1/16, 1:1 belt"),
+    ("$100", "%.3f" % STEPS_PER_DEG, "X knob steps/deg  1/16, 40T->60T belt"),
+    ("$101", "%.3f" % STEPS_PER_DEG, "Y knob steps/deg  1/16, 40T->60T belt"),
 
-    ("$110", "3600",   "X max deg/min = 10 knob turns/min, conservative to start"),
+    ("$110", "3600",   "X max deg/min = 10 knob turns/min (15 motor), conservative to start"),
     ("$111", "3600",   "Y max deg/min"),
 
     ("$120", "720",    "X accel deg/s^2"),
@@ -51,7 +53,7 @@ SETTINGS = [
     # DIR INVERT MASK, bit 0 = X, bit 1 = Y. + should move the stylus right
     # (X) and up (Y); on an EaS both of those are the knob turning CLOCKWISE.
     # A belt keeps the sense, so motor clockwise = knob clockwise, PROVIDED
-    # the motor shaft faces out of the board like the knob (the 1:1 twin
+    # the motor shaft faces out of the board like the knob (the twin
     # layout). Mount a motor shaft-backwards and its bit flips.
     #
     # Both checked 2026-10-12: +360 turned each one clockwise seen from the
