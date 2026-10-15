@@ -1,0 +1,142 @@
+{
+  "subject": "etchatron knob, GT2 60T, head 42 mm, 24 flutes",
+  "passed": true,
+  "claims": [
+    {
+      "claim": "knob is a closed volume",
+      "kind": "require",
+      "passed": true,
+      "detail": "watertight=True winding=True vol=+16.2 cm3 open edges=0",
+      "facts": {
+        "watertight": true,
+        "winding_consistent": true,
+        "volume_cm3": 16.207,
+        "open_edges": 0
+      }
+    },
+    {
+      "claim": "knob is one connected body",
+      "kind": "require",
+      "passed": true,
+      "detail": "1 bodies over 0.1 cm3, volumes [16.2] cm3",
+      "facts": {
+        "body_count": 1,
+        "body_volumes_cm3": [
+          16.2
+        ]
+      }
+    },
+    {
+      "claim": "knob survives being written",
+      "kind": "require",
+      "passed": true,
+      "detail": "written and read back: watertight=True bodies=1 volume moved 0.000 cm3",
+      "facts": {
+        "watertight": true,
+        "body_count": 1,
+        "volume_delta_cm3": 0.0
+      }
+    },
+    {
+      "claim": "belt fits between the flanges",
+      "kind": "require",
+      "passed": true,
+      "detail": "7.0 mm for a 6 mm belt",
+      "facts": {}
+    },
+    {
+      "claim": "frame flange stands beyond the belt back",
+      "kind": "require",
+      "passed": true,
+      "detail": "1.53 mm past the belt back (floor 0.80)",
+      "facts": {}
+    },
+    {
+      "claim": "knob head stands beyond the belt back",
+      "kind": "require",
+      "passed": true,
+      "detail": "1.53 mm past the belt back (floor 0.80)",
+      "facts": {}
+    },
+    {
+      "claim": "head OD measured on the mesh",
+      "kind": "require",
+      "passed": true,
+      "detail": "42.00 mm (frame flange 42.00)",
+      "facts": {}
+    },
+    {
+      "claim": "tooth count measured on the mesh",
+      "kind": "require",
+      "passed": true,
+      "detail": "60 grooves found round the band, 60 asked",
+      "facts": {}
+    },
+    {
+      "claim": "ribs grip the stem",
+      "kind": "require",
+      "passed": true,
+      "detail": "0.40 mm interference on a 28.00 stem",
+      "facts": {}
+    },
+    {
+      "claim": "bore clears the stem between ribs",
+      "kind": "require",
+      "passed": true,
+      "detail": "30.00 bore, 28.00 stem",
+      "facts": {}
+    },
+    {
+      "claim": "wall under the belt grooves",
+      "kind": "require",
+      "passed": true,
+      "detail": "3.09 mm from groove root to bore (floor 1.50)",
+      "facts": {}
+    },
+    {
+      "claim": "bore is open to its depth, closed above",
+      "kind": "require",
+      "passed": true,
+      "detail": "11.5 deep, 7.9 mm over it",
+      "facts": {}
+    },
+    {
+      "claim": "grub lands in the bore",
+      "kind": "require",
+      "passed": true,
+      "detail": "grub at z 9.9, bore to 11.5",
+      "facts": {}
+    },
+    {
+      "claim": "grub sits between flutes or in the plain band",
+      "kind": "require",
+      "passed": true,
+      "detail": "z 9.9",
+      "facts": {}
+    },
+    {
+      "claim": "fit",
+      "kind": "note",
+      "passed": null,
+      "detail": "slots over the original knob: 30 mm cavity on a 28 mm knob, 6 ribs at 27.6, top bottoms on the knob and the rim sits 0.5 below its base",
+      "facts": {}
+    },
+    {
+      "claim": "print",
+      "kind": "note",
+      "passed": null,
+      "detail": "head down, no supports; frame flange overhangs the tooth tips",
+      "facts": {
+        "overhang_mm": 2.16,
+        "height_mm": 19.4
+      }
+    },
+    {
+      "claim": "drive",
+      "kind": "note",
+      "passed": null,
+      "detail": "pitch dia 38.20 mm, 60T; off the 40T motor twin that is 1.50:1, so GRBL steps/deg becomes 13.333",
+      "facts": {}
+    }
+  ]
+}

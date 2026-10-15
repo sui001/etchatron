@@ -87,6 +87,13 @@
       "facts": {}
     },
     {
+      "claim": "wall under the belt grooves",
+      "kind": "require",
+      "passed": true,
+      "detail": "9.08 mm from groove root to bore (floor 1.50)",
+      "facts": {}
+    },
+    {
       "claim": "bore is open to its depth, closed above",
       "kind": "require",
       "passed": true,

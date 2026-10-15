@@ -29,6 +29,14 @@ on the shaft tip, so where it sits is set by the shaft length, not by eye.
 
     python tools/etchatron_knob.py [--teeth 40] [--head-od 28] [--stem 4.76] ...
     python tools/etchatron_knob.py --motor [--shaft-len 24] ...
+    python tools/etchatron_knob.py --over-knob [--knob-od 28 --knob-h 11] ...
+
+--over-knob (15 Oct) leaves the original EaS knob on and slots over it
+instead. Same form, enlarged: a 30 mm cavity (2 mm over the 28 mm knob)
+with six crush ribs that grip the knob, and the M3 grub tightens on it.
+A 28 mm knob inside means the tooth band has to grow to 60T to keep a wall
+under the grooves, so the motor (still the 40T twin) drives it 1.5:1, not
+1:1. Print it head down: the open cavity faces up and needs no bridge.
 
 Writes etchatron/knob/knob[_motor]_gt2_<N>t.stl, claims and a render.
 Exits 1 if any claim fails.
@@ -119,8 +127,8 @@ def build(a):
     # crush ribs added back into the bore, clear of the grub
     ribs = []
     rib_w = a.bore / 2 - a.rib_id / 2
-    for i in range(3):
-        th = 2 * math.pi * i / 3 + math.pi / 3
+    for i in range(a.ribs):
+        th = 2 * math.pi * (i + 0.5) / a.ribs     # half a pitch off +x, clear of the grub
         b = trimesh.creation.box(extents=[rib_w + 0.4, a.rib_t, a.bore_depth + 0.4])
         rmid = a.rib_id / 2 + (rib_w + 0.4) / 2
         b.apply_translation([rmid, 0, (a.bore_depth + 0.4) / 2])   # into the ceiling, not flush
@@ -156,6 +164,7 @@ def parser():
     p.add_argument("--rib-id", type=float, default=4.55,
                    help="circle the rib tips touch; printed ribs come up a bit fat")
     p.add_argument("--rib-t", type=float, default=0.8)
+    p.add_argument("--ribs", type=int, default=3, help="crush ribs round the bore")
     p.add_argument("--rib-lead", type=float, default=1.0, help="rib-free lead-in at the mouth")
     p.add_argument("--bore-depth", type=float, default=12.0, help="GUESS, stem length")
     p.add_argument("--grub", type=float, default=2.6,
@@ -163,6 +172,10 @@ def parser():
     p.add_argument("--grub-up", type=float, default=1.5, help="grub height above head base")
     p.add_argument("--motor", action="store_true",
                    help="the stepper twin: D-bore, no ribs; changes the bore defaults")
+    p.add_argument("--over-knob", action="store_true",
+                   help="slot over the original knob instead of replacing it; changes defaults")
+    p.add_argument("--knob-od", type=float, default=28.0, help="original knob, measured 15 Oct")
+    p.add_argument("--knob-h", type=float, default=11.0, help="original knob, measured 15 Oct")
     p.add_argument("--flat-at", type=float, default=2.05, help="D flat, mm from the axis")
     p.add_argument("--shaft-len", type=float, default=24.0,
                    help="shaft length out from the motor face; measured X 15, Y 24 (12 Oct)")
@@ -191,8 +204,16 @@ def parse(argv=None):
     A flag given explicitly always wins."""
     argv = sys.argv[1:] if argv is None else argv
     a = parser().parse_args(argv)
+    given = {x.split("=")[0] for x in argv}
+    if a.over_knob:
+        # cavity 2 mm over the knob, ribs 0.4 into it; 60T keeps ~3 mm under the grooves
+        for k, v in (("teeth", 60), ("head_od", 42.0), ("flange_od", 42.0),
+                     ("stem", a.knob_od), ("bore", a.knob_od + 2.0),
+                     ("rib_id", a.knob_od - 0.4), ("ribs", 6),
+                     ("bore_depth", a.knob_h + 0.5)):
+            if "--" + k.replace("_", "-") not in given:
+                setattr(a, k, v)
     if a.motor:
-        given = {x.split("=")[0] for x in argv}
         if "--bore" not in given:
             a.bore = MOTOR_BORE
         if "--bore-depth" not in given:
@@ -261,6 +282,9 @@ def main():
                   "%.2f mm interference on a %.2f stem" % (grip, a.stem))
         C.require("bore clears the stem between ribs", a.bore > a.stem + 0.3,
                   "%.2f bore, %.2f stem" % (a.bore, a.stem))
+    root_wall = d["r_tip"] - GROOVE_DEPTH - a.bore / 2
+    C.require("wall under the belt grooves", root_wall >= a.min_wall,
+              "%.2f mm from groove root to bore (floor %.2f)" % (root_wall, a.min_wall))
     probe = np.array([[0, 0, a.bore_depth - 0.5], [0, 0, a.bore_depth + a.min_wall - 0.05]])
     inside = part.contains(probe)
     C.require("bore is open to its depth, closed above", (not inside[0]) and inside[1],
@@ -271,14 +295,25 @@ def main():
         C.require("grub sits between flutes or in the plain band",
                   d["zg"] - a.grub / 2 >= d["z_head0"], "z %.1f" % d["zg"])
 
-    C.note("guesses", "head OD, head height, flute count and stem length are not measured yet")
-    C.note("print", "frame flange down, no supports; head underside overhangs the tips",
-           overhang_mm=round(a.head_od / 2 - d["r_tip"], 2), height_mm=round(d["z_top"], 2))
-    C.note("drive", "pitch dia %.2f mm, %.1f mm of belt per turn; 1:1, knob and motor twins"
-           % (d["pd"], a.teeth * PITCH))
+    if a.over_knob:
+        C.note("fit", "slots over the original knob: %.0f mm cavity on a %.0f mm knob, "
+               "%d ribs at %.1f, top bottoms on the knob and the rim sits %.1f below its base"
+               % (a.bore, a.knob_od, a.ribs, a.rib_id, a.bore_depth - a.knob_h))
+        C.note("print", "head down, no supports; frame flange overhangs the tooth tips",
+               overhang_mm=round(a.flange_od / 2 - d["r_tip"], 2), height_mm=round(d["z_top"], 2))
+        C.note("drive", "pitch dia %.2f mm, %dT; off the 40T motor twin that is %.2f:1, "
+               "so GRBL steps/deg becomes %.3f" % (d["pd"], a.teeth, a.teeth / 40,
+                                                   3200 * a.teeth / 40 / 360))
+    else:
+        C.note("guesses", "head OD, head height, flute count and stem length are not measured yet")
+        C.note("print", "frame flange down, no supports; head underside overhangs the tips",
+               overhang_mm=round(a.head_od / 2 - d["r_tip"], 2), height_mm=round(d["z_top"], 2))
+        C.note("drive", "pitch dia %.2f mm, %.1f mm of belt per turn; 1:1, knob and motor twins"
+               % (d["pd"], a.teeth * PITCH))
 
     os.makedirs(OUT, exist_ok=True)
     stem = ("knob_motor_gt2_%dt_shaft%g" % (a.teeth, a.shaft_len) if a.motor
+            else "knob_over_gt2_%dt" % a.teeth if a.over_knob
             else "knob_gt2_%dt" % a.teeth)
     stl = os.path.join(OUT, stem + ".stl")
     part.export(stl)
@@ -322,7 +357,9 @@ def render(part, d, a, path):
     ax.plot(a.head_od / 2 * np.cos(t), a.head_od / 2 * np.sin(t), color="black", lw=0.8, ls=":")
     ax.set_aspect("equal"); ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim)
     ax.set_title("plan through the belt band: %d teeth, %s" % (
-        a.teeth, "5 mm D-bore, flat to the grub" if a.motor else "3 crush ribs on the stem"),
+        a.teeth, "5 mm D-bore, flat to the grub" if a.motor
+        else "%d ribs on the %.0f mm knob" % (a.ribs, a.stem) if a.over_knob
+        else "3 crush ribs on the stem"),
         color="black")
     ax.tick_params(colors="black")
 
@@ -337,7 +374,8 @@ def render(part, d, a, path):
     ax2.text(d["r_tip"] + 0.5, d["z_teeth1"] + 0.6, "6 mm belt", color="black", fontsize=10)
     ax2.plot([-shaft_d / 2, -shaft_d / 2, shaft_d / 2, shaft_d / 2],
              [-3, a.bore_depth, a.bore_depth, -3], color="#e00000", lw=1.5, ls="--")
-    ax2.text(shaft_d / 2 + 0.5, -2, "motor shaft 5" if a.motor else "stem %.2f" % a.stem,
+    ax2.text(shaft_d / 2 + 0.5, -2, "motor shaft 5" if a.motor
+             else "EaS knob %.0f" % a.stem if a.over_knob else "stem %.2f" % a.stem,
              color="#e00000", fontsize=10)
     ax2.axhline(0, color="black", lw=2)
     ax2.text(-lim, -0.8, "motor side" if a.motor else "frame side", color="black",
