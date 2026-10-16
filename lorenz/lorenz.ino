@@ -13,27 +13,31 @@
 // X knob and z to the Y knob, so the butterfly stands upright. The original
 // had them the other way round (z horizontal); set SWAP_AXES 1 for that.
 //
-// The stylus start position is the Lorenz origin (x=0, z=0), and the figure
-// grows UP from there: roughly x +-20 and z 0..50 in Lorenz units. So start
-// the stylus bottom-centre. Size is DEG_PER_UNIT (knob degrees per Lorenz
-// unit), a guess until stylus travel per knob turn is measured.
+// START THE STYLUS IN THE CENTRE OF THE SCREEN. On boot the attractor is run
+// silently until it crosses the middle of the figure (x~0, z~Z_CENTRE, which
+// it does at iteration ~1610 from the original start), and drawing begins
+// there. So there is no lead-in line, and the figure (x -19..19, z 3..47
+// Lorenz units) sits centred on the screen, give or take a few degrees.
+// Size is DEG_PER_UNIT (knob degrees per Lorenz unit), a guess until stylus
+// travel per knob turn is measured. At 10: about +-190 deg wide, +-220 tall.
 //
 // Serial 115200: any byte pauses / resumes.
 
-#define VERSION "0.1.0"
+#define VERSION "0.2.0"
 
 // ---- tune these -----------------------------------------------------------
-#define DEG_PER_UNIT  10.0    // knob degrees per Lorenz unit: x +-200, z 0..500 deg
+#define DEG_PER_UNIT  10.0    // knob degrees per Lorenz unit: about +-190 x +-220 deg
 #define MAX_DEG_S     60.0    // dominant axis knob speed, same as GRBL $110 (3600/min)
 #define SWAP_AXES     0       // 1 = z horizontal, x vertical (the original layout)
 #define INVERT_X      0       // 1 flips X. Positive = clockwise = stylus right
 #define INVERT_Y      0       // 1 flips Y. Positive = clockwise = stylus up
 #define START_DELAY_S 3       // countdown before the first move
+#define Z_CENTRE      25.25   // middle of the figure's z range (3.5..47)
 // ---------------------------------------------------------------------------
 
-// 1/16 microstep (all three jumpers), 40T motor -> 60T over-knob = 1.5:1.
-// Same number as $100/$101 in grbl_setup.py.
-const float STEPS_PER_DEG  = 200.0 * 16 * 60 / 40 / 360.0;   // 13.333
+// 1/16 microstep (all three jumpers), 20T motor pulley -> 60T push-over
+// knob = 3:1. Same number as $100/$101 in grbl_setup.py.
+const float STEPS_PER_DEG  = 200.0 * 16 * 60 / 20 / 360.0;   // 26.667
 const float STEPS_PER_UNIT = STEPS_PER_DEG * DEG_PER_UNIT;
 const unsigned long STEP_US = (unsigned long)(1e6 / (MAX_DEG_S * STEPS_PER_DEG));
 
@@ -43,6 +47,17 @@ float x = 0.01, y = 0, z = 0;
 const float a = 10.0, b = 28.0, c = 2.66, dt = 0.01;
 
 long posX = 0, posY = 0;     // where the steppers are, in steps
+
+void step() {
+  x += (a * (y - x)) * dt;
+  y += (x * (b - z) - y) * dt;
+  z += ((x * y) - (c * z)) * dt;
+}
+
+// Absolute targets in steps, relative to the figure's centre, so rounding
+// never accumulates the way the original's int() deltas did.
+long targetX() { return lround((SWAP_AXES ? z - Z_CENTRE : x) * STEPS_PER_UNIT); }
+long targetY() { return lround((SWAP_AXES ? x : z - Z_CENTRE) * STEPS_PER_UNIT); }
 
 void setDir(int pin, bool positive, bool invert) {
   // GRBL convention, already checked on this rig with $3=0: DIR LOW = positive.
@@ -71,8 +86,8 @@ void checkSerial() {
 }
 
 // Bresenham line from where we are to (tx, ty) in steps, at a fixed step
-// rate on the longer axis. No acceleration: at 800 steps/s a NEMA17 starts
-// and stops dead without missing.
+// rate on the longer axis. No acceleration: at 60 deg/s of knob the motor
+// is doing half a turn a second, which a NEMA17 starts and stops dead.
 void moveTo(long tx, long ty) {
   long dx = tx - posX, dy = ty - posY;
   bool px = dx >= 0, py = dy >= 0;
@@ -101,6 +116,19 @@ void setup() {
   pinMode(EN, OUTPUT);
   digitalWrite(EN, LOW);     // drivers on
 
+  // Run the attractor without drawing until it passes the figure's centre,
+  // then call that point "here". Deterministic, so it lands on the same
+  // point every boot.
+  for (long i = 0; ; i++) {
+    step();
+    if (i > 500 && fabs(x) < 0.3 && fabs(z - Z_CENTRE) < 1.0) {
+      Serial.print("start at iteration "); Serial.print(i);
+      Serial.print("  x "); Serial.print(x, 2); Serial.print("  z "); Serial.println(z, 2);
+      break;
+    }
+  }
+  posX = targetX(); posY = targetY();
+
   Serial.print("steps/deg "); Serial.print(STEPS_PER_DEG, 3);
   Serial.print("  deg/unit "); Serial.print(DEG_PER_UNIT, 1);
   Serial.print("  step us "); Serial.println(STEP_US);
@@ -112,15 +140,8 @@ void setup() {
 }
 
 void loop() {
-  x += (a * (y - x)) * dt;
-  y += (x * (b - z) - y) * dt;
-  z += ((x * y) - (c * z)) * dt;
-
-  // Absolute targets, so rounding never accumulates the way the original's
-  // int() deltas did.
-  float h = SWAP_AXES ? z : x;
-  float v = SWAP_AXES ? x : z;
-  moveTo(lround(h * STEPS_PER_UNIT), lround(v * STEPS_PER_UNIT));
+  step();
+  moveTo(targetX(), targetY());
 
   checkSerial();
 }
