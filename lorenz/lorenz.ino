@@ -19,14 +19,14 @@
 // there. So there is no lead-in line, and the figure (x -19..19, z 3..47
 // Lorenz units) sits centred on the screen, give or take a few degrees.
 // Size is DEG_PER_UNIT (knob degrees per Lorenz unit), a guess until stylus
-// travel per knob turn is measured. At 10: about +-190 deg wide, +-220 tall.
+// travel per knob turn is measured. 10 drew a good figure on 16 Oct; 20 doubles it.
 //
 // Serial 115200: any byte pauses / resumes.
 
-#define VERSION "0.2.0"
+#define VERSION "0.2.1"
 
 // ---- tune these -----------------------------------------------------------
-#define DEG_PER_UNIT  10.0    // knob degrees per Lorenz unit: about +-190 x +-220 deg
+#define DEG_PER_UNIT  20.0    // knob degrees per Lorenz unit: about +-380 x +-440 deg
 #define MAX_DEG_S     60.0    // dominant axis knob speed, same as GRBL $110 (3600/min)
 #define SWAP_AXES     0       // 1 = z horizontal, x vertical (the original layout)
 #define INVERT_X      0       // 1 flips X. Positive = clockwise = stylus right
