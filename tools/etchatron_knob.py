@@ -51,7 +51,7 @@ import numpy as np
 import trimesh
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import handguard_claims as hc  # noqa: E402
+import claims as hc  # noqa: E402
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "etchatron", "knob")
