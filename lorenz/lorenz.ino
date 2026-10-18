@@ -7,7 +7,7 @@
 //   EN D8, active LOW, shared by all drivers
 //
 // Flashing this replaces GRBL. To go back: reflash grbl_v1.1h, then
-// python etchatron/grbl_setup.py --port COM60
+// python grbl_setup.py --port COM60
 //
 // The maths is unchanged (a=10, b=28, c=2.66, dt=0.01). Lorenz x goes to the
 // X knob and z to the Y knob, so the butterfly stands upright. The original
@@ -107,9 +107,9 @@ void moveTo(long tx, long ty) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("=== gen3d Etchatron Lorenz v" VERSION " ===");
+  Serial.println("=== Etchatron Lorenz v" VERSION " ===");
   Serial.println("Standalone Lorenz attractor on an Etch A Sketch, CNC Shield V3 step/dir, no GRBL");
-  Serial.println("https://github.com/sui001/gen3d/tree/master/etchatron/lorenz");
+  Serial.println("https://github.com/sui001/etchatron/tree/master/lorenz");
 
   pinMode(X_STEP, OUTPUT); pinMode(Y_STEP, OUTPUT);
   pinMode(X_DIR, OUTPUT);  pinMode(Y_DIR, OUTPUT);

@@ -38,7 +38,7 @@ A 28 mm knob inside means the tooth band has to grow to 60T to keep a wall
 under the grooves, so the motor (still the 40T twin) drives it 1.5:1, not
 1:1. Print it head down: the open cavity faces up and needs no bridge.
 
-Writes etchatron/knob/knob[_motor]_gt2_<N>t.stl, claims and a render.
+Writes knob/knob[_motor]_gt2_<N>t.stl, claims and a render.
 Exits 1 if any claim fails.
 """
 
@@ -54,7 +54,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import claims as hc  # noqa: E402
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                   "etchatron", "knob")
+                   "knob")
 
 # GT2: 2 mm pitch, pitch line 0.254 mm outside the tooth tips
 PITCH, PLD = 2.0, 0.254

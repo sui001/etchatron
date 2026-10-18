@@ -1,7 +1,7 @@
 """grbl_setup.py: push Etchatron's settings into a freshly flashed GRBL, and read them back.
 
-    python etchatron/grbl_setup.py --port COM60            apply, then verify
-    python etchatron/grbl_setup.py --port COM60 --show     read what is there, change nothing
+    python grbl_setup.py --port COM60            apply, then verify
+    python grbl_setup.py --port COM60 --show     read what is there, change nothing
 
 Same pattern as genarm/host/grbl_setup.py. GRBL's $$ settings live in the
 Uno's EEPROM and survive a power cycle but not a reflash, and they are the
