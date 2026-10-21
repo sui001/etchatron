@@ -170,6 +170,7 @@ input[type=number], input[type=text], select { font: inherit; color: var(--text)
         <label class="f">Slack Y, &deg; <input id="cSlackY" type="number" value="17" step="1" min="0"></label>
         <label class="f">Blend (0 = burst) <input id="cBlend" type="number" value="3" step="1" min="0" max="10"></label>
         <label class="f">Limit &plusmn; knob &deg; <input id="cLimit" type="number" value="600" step="20" min="50"></label>
+        <label class="f">Rotate drawing 90&deg; (landscape) <input id="cRotate" type="checkbox" style="justify-self:start;width:20px;height:20px"></label>
         <div class="row"><button id="btnSend">Send to machine</button></div>
       </section>
     </div>
@@ -541,7 +542,7 @@ let machine = null;
 // --------------------------------------------------------------- draw mode
 // moveFrom[n] / movePts[n]: canonical start and end of move n (1-based), so
 // a progress report (n, per mille) gives a 3D point for the voice.
-const draw = { movePts: [], base: 0, lastPushed: null, easPath: [] };
+const draw = { movePts: [], base: 0, lastPushed: null, easPath: [], rotate: false };
 
 function settings() {
   const v = (id) => +document.getElementById(id).value;
@@ -557,7 +558,10 @@ function sendSettings() {
 function toSteps(p) {
   const s = settings(), k = s.scale * STEPS_PER_DEG, lim = s.limit * STEPS_PER_DEG;
   const c = (v) => Math.max(-lim, Math.min(lim, v));
-  return [c((p[0] - XC) * k), c((p[2] - ZC) * k)];
+  const x = (p[0] - XC) * k, y = (p[2] - ZC) * k;
+  // rotated 90 deg clockwise: the attractor's top points right, so the
+  // tall figures lie along the Etch A Sketch's wide side
+  return draw.rotate ? [c(y), c(-x)] : [c(x), c(y)];
 }
 
 function stylusPoint() {
@@ -709,12 +713,14 @@ async function startDraw() {
   const p0 = warmToCentre(play.gen);
   draw.movePts = [p0];   // move base+n goes from movePts[n-1] to movePts[n]
   draw.base = machine.sent;
+  draw.rotate = $('cRotate').checked;   // fixed for the whole drawing
   draw.lastPushed = null;
   sendSettings();
   if (!machine.motors) { machine.cmd('E 1'); machine.motors = true; }
   play.mode = 'draw'; play.paused = false;
   modeButtons();
   log(`drawing ${ATTRACTORS[selected].name} from the centre`, 'note');
+  feedMachine();   // first moves now, not on the next animation frame
 }
 
 function stopAll() {
@@ -744,6 +750,14 @@ function updateStats() {
   $('zeroHint').hidden = machine.motors;
 }
 
+// Moves are also fed from the machine's own reports, not only from the
+// animation frame: a hidden or minimised tab stops requestAnimationFrame,
+// and the drawing would otherwise stall once the queue ran dry.
+function onMachineReport() {
+  recordStylus();
+  if (play.mode === 'draw') feedMachine();
+}
+
 function onMachineReady() {
   sendSettings();
   machine.cmd('?');
@@ -756,7 +770,7 @@ $('btnConnect').onclick = async () => {
   }
   try {
     const m = new SerialMachine(); machine = m;
-    m.onReport = () => recordStylus();
+    m.onReport = onMachineReport;
     await m.open();
     setConn('on', 'Uno connected');
     log('port open, waiting for the controller banner (the Uno resets on connect)', 'note');
@@ -764,7 +778,7 @@ $('btnConnect').onclick = async () => {
   } catch (e) { log('connect failed: ' + e.message, 'err'); machine = null; }
 };
 $('btnSim').onclick = () => {
-  machine = new SimMachine(); machine.onReport = () => recordStylus();
+  machine = new SimMachine(); machine.onReport = onMachineReport;
   setConn('sim', 'simulated machine');
 };
 $('btnStop').onclick = () => { stopAll(); if (machine) machine.cmd('!'); };
