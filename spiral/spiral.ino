@@ -30,7 +30,7 @@
 // Start: wipe the screen, centre the stylus, press reset. Serial 115200: any
 // byte pauses / resumes.
 
-#define VERSION "0.4.0"
+#define VERSION "0.5.0"
 
 // ---- tune these -----------------------------------------------------------
 #define TURNS         8
@@ -42,6 +42,8 @@
 #define BLEND         1       // extra slack steps per drawn step after a reversal.
                               // 0 = all at once (v0.3 and earlier, notches);
                               // 1 = that knob runs double speed until taken up
+#define BLEND_LADDER  1       // 1 = ring N uses blend N (ring 0 uses 1), ignores BLEND
+                              // v0.4.0 at blend 1 looked delayed, bottom best
 #define INVERT_X      0
 #define INVERT_Y      0
 #define START_DELAY_S 3
@@ -52,6 +54,7 @@
 const float STEPS_PER_DEG = 200.0 * 16 * 60 / 20 / 360.0;   // 26.667
 const unsigned long STEP_US = (unsigned long)(1e6 / (MAX_DEG_S * STEPS_PER_DEG));
 long BL_X = 0, BL_Y = 0;     // set per ring by setRing()
+int blend = BLEND;           // set per ring by setRing() when BLEND_LADDER
 
 void setRing(int ring) {
   float bx = BACKLASH_X_DEG + (ring - LADDER_MID) * LADDER_DEG;
@@ -60,7 +63,9 @@ void setRing(int ring) {
   BL_Y = lround(max(by, 0.0f) * STEPS_PER_DEG);
   Serial.print("ring "); Serial.print(ring);
   Serial.print("  backlash deg X "); Serial.print(max(bx, 0.0f), 1);
-  Serial.print(" Y "); Serial.println(max(by, 0.0f), 1);
+  Serial.print(" Y "); Serial.print(max(by, 0.0f), 1);
+  if (BLEND_LADDER) blend = max(ring, 1);
+  Serial.print("  blend "); Serial.println(blend);
 }
 
 const int X_STEP = 2, Y_STEP = 3, X_DIR = 5, Y_DIR = 6, EN = 8;
@@ -115,12 +120,12 @@ void takeUp(int stepPin, long n) {
 }
 
 void reversal(int stepPin, long bl, long &pend) {
-  if (BLEND == 0) { takeUp(stepPin, bl); pend = 0; }
+  if (blend == 0) { takeUp(stepPin, bl); pend = 0; }
   else pend = bl - pend;
 }
 
 void payOff(int stepPin, long &pend) {
-  for (int k = 0; k < BLEND && pend > 0; k++) {
+  for (int k = 0; k < blend && pend > 0; k++) {
     delayMicroseconds(150);
     pulse(stepPin);
     pend--;
