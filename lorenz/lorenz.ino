@@ -23,7 +23,7 @@
 //
 // Serial 115200: any byte pauses / resumes.
 
-#define VERSION "0.2.1"
+#define VERSION "0.3.0"
 
 // ---- tune these -----------------------------------------------------------
 #define DEG_PER_UNIT  20.0    // knob degrees per Lorenz unit: about +-380 x +-440 deg
@@ -32,6 +32,10 @@
 #define INVERT_X      0       // 1 flips X. Positive = clockwise = stylus right
 #define INVERT_Y      0       // 1 flips Y. Positive = clockwise = stylus up
 #define START_DELAY_S 3       // countdown before the first move
+#define BACKLASH_X_DEG 23.0   // knob slack taken up on every X reversal (spiral 21 Oct)
+#define BACKLASH_Y_DEG 17.0   // knob slack taken up on every Y reversal
+#define BLEND         3       // slack steps paid per drawn step after a reversal;
+                              // 0 = all at once. From the spiral blend ladder (v0.5.0)
 #define Z_CENTRE      25.25   // middle of the figure's z range (3.5..47)
 // ---------------------------------------------------------------------------
 
@@ -40,13 +44,17 @@
 const float STEPS_PER_DEG  = 200.0 * 16 * 60 / 20 / 360.0;   // 26.667
 const float STEPS_PER_UNIT = STEPS_PER_DEG * DEG_PER_UNIT;
 const unsigned long STEP_US = (unsigned long)(1e6 / (MAX_DEG_S * STEPS_PER_DEG));
+const long BL_X = lround(BACKLASH_X_DEG * STEPS_PER_DEG);
+const long BL_Y = lround(BACKLASH_Y_DEG * STEPS_PER_DEG);
 
 const int X_STEP = 2, Y_STEP = 3, X_DIR = 5, Y_DIR = 6, EN = 8;
 
 float x = 0.01, y = 0, z = 0;
 const float a = 10.0, b = 28.0, c = 2.66, dt = 0.01;
 
-long posX = 0, posY = 0;     // where the steppers are, in steps
+long posX = 0, posY = 0;     // where the stylus should be, in steps, slack excluded
+int lastDirX = 0, lastDirY = 0;   // +1 / -1, 0 = not moved yet
+long pendX = 0, pendY = 0;   // slack steps still owed since the last reversal
 
 void step() {
   x += (a * (y - x)) * dt;
@@ -85,6 +93,34 @@ void checkSerial() {
   Serial.println("running");
 }
 
+// Slack compensation, worked out on etchatron/spiral (21 Oct). The EaS
+// slack is part dead gap, part springy string, so a one-burst take-up big
+// enough to keep curves round leaves a step. Instead, on a reversal the
+// slack is owed, and paid off BLEND extra steps per drawn step on that axis,
+// spreading it over the start of the curve. A reversal before it is paid
+// off only has to cross back what was taken up: pend = BL - pend. The
+// first move is not compensated (which side of the slack is unknown).
+void takeUp(int stepPin, long n) {
+  for (long i = 0; i < n; i++) {
+    unsigned long t0 = micros();
+    pulse(stepPin);
+    while (micros() - t0 < STEP_US) {}
+  }
+}
+
+void reversal(int stepPin, long bl, long &pend) {
+  if (BLEND == 0) { takeUp(stepPin, bl); pend = 0; }
+  else pend = bl - pend;
+}
+
+void payOff(int stepPin, long &pend) {
+  for (int k = 0; k < BLEND && pend > 0; k++) {
+    delayMicroseconds(150);
+    pulse(stepPin);
+    pend--;
+  }
+}
+
 // Bresenham line from where we are to (tx, ty) in steps, at a fixed step
 // rate on the longer axis. No acceleration: at 60 deg/s of knob the motor
 // is doing half a turn a second, which a NEMA17 starts and stops dead.
@@ -94,13 +130,16 @@ void moveTo(long tx, long ty) {
   setDir(X_DIR, px, INVERT_X);
   setDir(Y_DIR, py, INVERT_Y);
   delayMicroseconds(5);      // DIR setup time before the first step
+  int sx = px ? 1 : -1, sy = py ? 1 : -1;
+  if (dx != 0 && sx != lastDirX) { if (lastDirX != 0) reversal(X_STEP, BL_X, pendX); lastDirX = sx; }
+  if (dy != 0 && sy != lastDirY) { if (lastDirY != 0) reversal(Y_STEP, BL_Y, pendY); lastDirY = sy; }
   dx = labs(dx); dy = labs(dy);
   long n = max(dx, dy), ex = 0, ey = 0;
   for (long i = 0; i < n; i++) {
     unsigned long t0 = micros();
     ex += dx; ey += dy;
-    if (ex >= n) { ex -= n; pulse(X_STEP); posX += px ? 1 : -1; }
-    if (ey >= n) { ey -= n; pulse(Y_STEP); posY += py ? 1 : -1; }
+    if (ex >= n) { ex -= n; pulse(X_STEP); posX += sx; payOff(X_STEP, pendX); }
+    if (ey >= n) { ey -= n; pulse(Y_STEP); posY += sy; payOff(Y_STEP, pendY); }
     while (micros() - t0 < STEP_US) {}
   }
 }
@@ -131,6 +170,9 @@ void setup() {
 
   Serial.print("steps/deg "); Serial.print(STEPS_PER_DEG, 3);
   Serial.print("  deg/unit "); Serial.print(DEG_PER_UNIT, 1);
+  Serial.print("  slack X "); Serial.print(BACKLASH_X_DEG, 1);
+  Serial.print(" Y "); Serial.print(BACKLASH_Y_DEG, 1);
+  Serial.print(" blend "); Serial.print(BLEND);
   Serial.print("  step us "); Serial.println(STEP_US);
   for (int s = START_DELAY_S; s > 0; s--) {
     Serial.print("start in "); Serial.println(s);
