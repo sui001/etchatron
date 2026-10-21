@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Etchatron Control</title>
+<!-- PAGE_VERSION below: bump on every change, shown in the header -->
 <!--
   Etchatron control page. Open in Chrome or Edge (Web Serial).
   If file:// will not offer the serial port, serve it:  python -m http.server 8000
@@ -92,7 +93,7 @@ input[type=number], input[type=text], select { font: inherit; color: var(--text)
 </head>
 <body>
 <header>
-  <h1>Etchatron</h1>
+  <h1>Etchatron <span id="pageVer" style="color:var(--accent);font-size:15px"></span></h1>
   <span id="conn" class="chip off">not connected</span>
   <span id="fw" class="chip" hidden></span>
   <div class="spacer"></div>
@@ -188,6 +189,8 @@ input[type=number], input[type=text], select { font: inherit; color: var(--text)
 
 <script>
 'use strict';
+const PAGE_VERSION = '0.2.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding
+document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
 const WINDOW = 12;                                  // moves in flight (firmware queue 16)
@@ -814,7 +817,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 if (!('serial' in navigator)) log('Web Serial not available in this browser: Simulate machine still works.', 'note');
-log('Etchatron control ready. Connect the Uno (controller.ino) or Simulate machine.', 'note');
+log('Etchatron control v' + PAGE_VERSION + ' ready. Connect the Uno (controller.ino) or Simulate machine.', 'note');
 requestAnimationFrame(frame);
 </script>
 </body>
