@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Etchatron Control</title>
+<!--
+  Etchatron control page. Open in Chrome or Edge (Web Serial).
+  If file:// will not offer the serial port, serve it:  python -m http.server 8000
+  in this folder, then http://localhost:8000
+
+  The page does the thinking, controller/controller.ino does the moving.
+  Attractors and sound are a port of Thomas Fischer's lorenz_av.py
+  (thomas/lorenz_av.py): five attractors mapped into one Lorenz-sized box,
+  Doppler-shifted harmonic tone, distance gain, level + interaural-time
+  panning, Lloyd's-mirror floor reflection, elevation brightness, and the
+  firefly afterglow trail.
+
+  Two modes:
+    Screen  Thomas's piece as written: one attractor step per 10 ms audio
+            block, real time, screen and sound only.
+    Draw    the Etch A Sketch sets the pace. Steps go to the Uno as moves;
+            the sound and the trail follow the stylus position it reports,
+            so they run at drawing speed, not real time.
+-->
+<style>
+:root {
+  --bg: #0b0d0b;
+  --panel: #151a14;
+  --panel-2: #1d2419;
+  --line: #34412c;
+  --text: #f2ffe6;
+  --label: #c8f59a;
+  --accent: #b9ff5a;
+  --accent-ink: #0b1400;
+  --warn: #ffd23f;
+  --stop: #ff3b30;
+  --ok: #5dff8a;
+  --eas: #c9cdc8;
+  --eas-ink: #2b2b2b;
+  --eas-frame: #c8102e;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
+.chip { padding: 3px 10px; border-radius: 999px; font-weight: 600; font-size: 13px;
+  border: 1px solid var(--line); }
+.chip.off { color: var(--warn); border-color: var(--warn); }
+.chip.on { color: var(--ok); border-color: var(--ok); }
+.chip.sim { color: #7fd7ff; border-color: #7fd7ff; }
+.spacer { flex: 1; }
+button { font: inherit; font-weight: 600; color: var(--text); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.active { outline: 2px solid var(--accent); outline-offset: 1px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.stop { background: var(--stop); border-color: var(--stop); color: #fff; font-size: 16px;
+  padding: 8px 18px; letter-spacing: 1px; }
+main { display: grid; grid-template-columns: minmax(300px, 460px) 1fr; gap: 16px; padding: 16px; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--label);
+  margin: 0 0 10px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+#av { width: 100%; aspect-ratio: 450 / 752; background: #000; border-radius: 8px; display: block; }
+.attractors { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 10px 0; }
+.attractors button { padding: 7px 2px; font-size: 13px; }
+.right { display: grid; gap: 16px; align-content: start; }
+.eas-wrap { background: var(--eas-frame); border-radius: 18px; padding: 18px 22px 30px; }
+#eas { width: 100%; aspect-ratio: 4 / 3; background: var(--eas); border-radius: 4px; display: block; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+.stats { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-variant-numeric: tabular-nums; }
+.stats dt { color: var(--label); }
+.stats dd { margin: 0; font-weight: 600; }
+.jog { display: grid; grid-template-columns: repeat(3, 52px); gap: 6px; justify-content: start; }
+.jog button { height: 44px; font-size: 18px; padding: 0; }
+label.f { display: grid; grid-template-columns: 1fr 90px; align-items: center; gap: 8px;
+  margin-bottom: 6px; color: var(--label); }
+input[type=number], input[type=text], select { font: inherit; color: var(--text); background: #0f130e;
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; width: 100%; }
+#log { height: 170px; overflow: auto; background: #070907; border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 8px; font: 12px/1.35 ui-monospace, Consolas, monospace;
+  white-space: pre-wrap; color: #e6ffd0; }
+#log .tx { color: #7fd7ff; } #log .err { color: var(--stop); } #log .note { color: var(--warn); }
+.hint { color: var(--warn); font-size: 13px; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Etchatron</h1>
+  <span id="conn" class="chip off">not connected</span>
+  <span id="fw" class="chip" hidden></span>
+  <div class="spacer"></div>
+  <button id="btnConnect" class="primary">Connect Uno</button>
+  <button id="btnSim">Simulate machine</button>
+  <button id="btnStop" class="stop">STOP</button>
+</header>
+
+<main>
+  <!-- left: Thomas's audiovisual attractor -->
+  <section>
+    <h2>Attractor</h2>
+    <canvas id="av" width="450" height="752"></canvas>
+    <div class="attractors" id="attractors"></div>
+    <div class="row">
+      <button id="btnScreen" class="primary">Play on screen</button>
+      <button id="btnDraw">Draw on Etch A Sketch</button>
+      <button id="btnPause" disabled>Pause</button>
+      <button id="btnSound" class="active">Sound on</button>
+      <button id="btnRestart">New start</button>
+    </div>
+    <div class="stats">
+      <dt>Mode</dt><dd id="sMode">stopped</dd>
+      <dt>Start</dt><dd id="sStart">-</dd>
+      <dt>Steps</dt><dd id="sSteps">0</dd>
+    </div>
+  </section>
+
+  <div class="right">
+    <!-- Etch A Sketch view -->
+    <section>
+      <h2>Etch A Sketch view <span style="text-transform:none;letter-spacing:0;color:var(--text);font-weight:400">
+        (knob degrees, dashed box = limits)</span></h2>
+      <div class="eas-wrap"><canvas id="eas" width="800" height="600"></canvas></div>
+      <div class="row" style="margin-top:10px">
+        <button id="btnShake">Shake (clear view)</button>
+      </div>
+    </section>
+
+    <div class="grid2">
+      <section>
+        <h2>Machine</h2>
+        <dl class="stats">
+          <dt>Stylus</dt><dd id="sPos">-</dd>
+          <dt>Queue</dt><dd id="sQueue">-</dd>
+          <dt>Moves done</dt><dd id="sDone">-</dd>
+          <dt>Motors</dt><dd id="sMotors">-</dd>
+        </dl>
+        <div class="row" style="margin-top:10px">
+          <button id="btnMotors">Motors on</button>
+          <button id="btnZero">Zero here</button>
+        </div>
+        <p class="hint" id="zeroHint">Motors off: centre the stylus by hand, then Zero here.</p>
+        <h2 style="margin-top:12px">Jog</h2>
+        <div class="row">
+          <div class="jog">
+            <span></span><button data-jog="0,1">&uarr;</button><span></span>
+            <button data-jog="-1,0">&larr;</button><button id="btnHome" title="Go to zero">&#9678;</button><button data-jog="1,0">&rarr;</button>
+            <span></span><button data-jog="0,-1">&darr;</button><span></span>
+          </div>
+          <select id="jogStep" style="width:auto">
+            <option value="5">5&deg;</option>
+            <option value="20" selected>20&deg;</option>
+            <option value="90">90&deg;</option>
+            <option value="360">360&deg;</option>
+          </select>
+        </div>
+      </section>
+
+      <section>
+        <h2>Settings</h2>
+        <label class="f">Scale, knob &deg; per unit <input id="cScale" type="number" value="20" step="1" min="1"></label>
+        <label class="f">Speed, knob &deg;/s <input id="cSpeed" type="number" value="60" step="5" min="5" max="250"></label>
+        <label class="f">Slack X, &deg; <input id="cSlackX" type="number" value="23" step="1" min="0"></label>
+        <label class="f">Slack Y, &deg; <input id="cSlackY" type="number" value="17" step="1" min="0"></label>
+        <label class="f">Blend (0 = burst) <input id="cBlend" type="number" value="3" step="1" min="0" max="10"></label>
+        <label class="f">Limit &plusmn; knob &deg; <input id="cLimit" type="number" value="600" step="20" min="50"></label>
+        <div class="row"><button id="btnSend">Send to machine</button></div>
+      </section>
+    </div>
+
+    <section>
+      <h2>Serial log</h2>
+      <div id="log"></div>
+      <div class="row" style="margin-top:8px">
+        <input id="cmd" type="text" placeholder="raw command, e.g. ?  or  J 200 0" style="flex:1">
+        <button id="btnCmd">Send</button>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+'use strict';
+// ------------------------------------------------------------------ constants
+const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
+const WINDOW = 12;                                  // moves in flight (firmware queue 16)
+
+// --------------------------------------------- attractors (lorenz_av.py port)
+const TARGET = [[-19, 21], [-24, 25], [1, 54]];
+const XC = (TARGET[0][0] + TARGET[0][1]) / 2;       // centre of the drawing box
+const ZC = (TARGET[2][0] + TARGET[2][1]) / 2;
+const START_JITTER = 0.05;
+
+const dLorenz = (x, y, z) => [10 * (y - x), 28 * x - x * z - y, x * y - (8 / 3) * z];
+const dRossler = (x, y, z) => [-y - z, x + 0.2 * y, 0.2 + z * (x - 5.7)];
+const dThomas = (x, y, z) => { const b = 0.208186;
+  return [Math.sin(y) - b * x, Math.sin(z) - b * y, Math.sin(x) - b * z]; };
+const dAizawa = (x, y, z) => { const a = 0.95, ab = 0.7, c = 0.6, d = 3.5, e = 0.25, f = 0.1;
+  return [(z - ab) * x - d * y, d * x + (z - ab) * y,
+    c + a * z - z ** 3 / 3 - (x * x + y * y) * (1 + e * z) + f * z * x ** 3]; };
+const dHalvorsen = (x, y, z) => { const a = 1.89;
+  return [-a * x - 4 * y - 4 * z - y * y, -a * y - 4 * z - 4 * x - z * z, -a * z - 4 * x - 4 * y - x * x]; };
+
+const ATTRACTORS = [
+  { name: 'Lorenz',    d: dLorenz,    dt: 0.01000, sub: 1, start: [0, 1, 1.05], ranges: TARGET },
+  { name: 'Rössler',   d: dRossler,   dt: 0.04208, sub: 1, start: [1.1125, -6.1135, 0.0360],
+    ranges: [[-9.62, 12.79], [-11.81, 8.03], [0.01, 38.81]] },
+  { name: 'Thomas',    d: dThomas,    dt: 0.11213, sub: 1, start: [3.2616, 2.3306, 1.9864],
+    ranges: [[-1.07, 3.78], [-1.07, 3.78], [-1.07, 3.78]] },
+  { name: 'Aizawa',    d: dAizawa,    dt: 0.02680, sub: 4, start: [0.0624, 0.0830, -0.2338],
+    ranges: [[-1.55, 1.54], [-1.50, 1.59], [-0.60, 1.93]] },
+  { name: 'Halvorsen', d: dHalvorsen, dt: 0.00878, sub: 1, start: [-5.5514, -2.2521, 0.7790],
+    ranges: [[-12.58, 6.51], [-13.32, 6.42], [-12.95, 6.26]] },
+];
+
+class Gen {
+  constructor(index) {
+    const a = ATTRACTORS[index];
+    this.index = index; this.a = a; this.steps = 0;
+    this.scale = []; this.offset = [];
+    a.ranges.forEach(([lo, hi], i) => {
+      const [tlo, thi] = TARGET[i], k = (thi - tlo) / (hi - lo);
+      this.scale.push(k); this.offset.push(tlo - lo * k);
+    });
+    const jy = (a.ranges[1][1] - a.ranges[1][0]) / 50, jz = (a.ranges[2][1] - a.ranges[2][0]) / 53;
+    const r = () => (Math.random() * 2 - 1) * START_JITTER;
+    this.r = [a.start[0], a.start[1] + r() * jy, a.start[2] + r() * jz];
+    this.startText = `${a.name}: y = ${this.r[1].toFixed(9)}, z = ${this.r[2].toFixed(9)}`;
+  }
+  step() {
+    const h = this.a.dt / this.a.sub;
+    for (let i = 0; i < this.a.sub; i++) {
+      const [dx, dy, dz] = this.a.d(...this.r);
+      this.r[0] += dx * h; this.r[1] += dy * h; this.r[2] += dz * h;
+    }
+    this.steps++;
+    return this.canon();
+  }
+  canon() { return this.r.map((v, i) => v * this.scale[i] + this.offset[i]); }
+}
+
+// ------------------------------------------------- audio (worklet = the voice)
+// The worklet is a pure synth: it eats one canonical point per 10 ms block
+// from a queue and renders Thomas's voice for it. Whoever feeds the queue
+// sets the tempo: the attractor itself (Screen) or the stylus (Draw).
+const WORKLET_SRC = `
+const OX = 1.177, OY = 24.787, OZ = 27.280, FREQ = 440;
+const REFL_MIX = 0.4, REFL_TAU = 0.008, ITD_MAX = 0.0006;
+const RATIOS = [0.5, 1, 2, 3, 4], BASE = [0.45, 1, 0.5, 0.22, 0.12], EXP = [0, 0, 1, 2, 3];
+const BRIGHT_LO = 0.15, BRIGHT_HI = 0.20, EZ_LO = 1, EZ_HI = 54;
+const dist = (x, y, z) => Math.hypot(OX - x, OY - y, OZ - z);
+class Voice extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.B = Math.round(0.01 * sampleRate);
+    this.buf = new Float32Array(this.B * 2); this.pos = this.B;
+    this.q = []; this.consumed = 0; this.last = null;
+    this.phase = 0; this.prev = null; this.old = null; this.gate = true;
+    this.port.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === 'pts') for (const p of m.pts) this.q.push(p);
+      else if (m.type === 'reset') { this.q = []; this.last = null; this.prev = null; this.old = null; this.consumed = 0; }
+      else if (m.type === 'gate') this.gate = m.on;
+    };
+  }
+  block() {
+    let p = null;
+    if (this.q.length) { p = this.q.shift(); this.consumed++; this.last = p; }
+    else p = this.last;
+    const b = this.buf, B = this.B;
+    if (!p || !this.gate) { b.fill(0); this.prev = null; this.old = null; return; }
+    const [xs, ys, zs] = p;
+    const cur = dist(xs, ys, zs) / 92;
+    if (this.old === null) this.old = cur;
+    const gain = 0.03 + cur, speed = this.old - cur; this.old = cur;
+    const rd = dist(xs, ys, -zs) / 92;
+    const gr = (0.03 + rd) * REFL_MIX, tau = (rd - cur) * REFL_TAU;
+    const pan = Math.max(-1, Math.min(1, xs / 21));
+    const f = FREQ - speed * 300;
+    const th = (pan + 1) * Math.PI / 4, cl = Math.cos(th), cr = Math.sin(th);
+    const itd = Math.PI * FREQ * ITD_MAX * pan;
+    const e = Math.max(0, Math.min(1, (zs - EZ_LO) / (EZ_HI - EZ_LO)));
+    const tilt = BRIGHT_LO + (BRIGHT_HI - BRIGHT_LO) * e;
+    const w = BASE.map((v, i) => v * tilt ** EXP[i]);
+    const ws = w.reduce((s, v) => s + v, 0); for (let i = 0; i < 5; i++) w[i] /= ws;
+    if (!this.prev) this.prev = [f, gain, gr, cl, cr, w, itd, tau];
+    const [pf, pg, pgr, pcl, pcr, pw, pitd, ptau] = this.prev;
+    let ph = this.phase;
+    for (let n = 0; n < B; n++) {
+      const t = n / B;
+      const fd = pf + (f - pf) * t, gd = pg + (gain - pg) * t, grr = pgr + (gr - pgr) * t;
+      const l = pcl + (cl - pcl) * t, r = pcr + (cr - pcr) * t;
+      const di = pitd + (itd - pitd) * t, dtau = ptau + (tau - ptau) * t;
+      ph += 2 * Math.PI * fd / sampleRate;
+      const off = 2 * Math.PI * fd * dtau;
+      let dL = 0, rL = 0, dR = 0, rR = 0;
+      for (let k = 0; k < 5; k++) {
+        const wk = pw[k] + (w[k] - pw[k]) * t, rk = RATIOS[k];
+        dL += Math.sin((ph - di) * rk) * wk;  rL += Math.sin((ph - off - di) * rk) * wk;
+        dR += Math.sin((ph + di) * rk) * wk;  rR += Math.sin((ph - off + di) * rk) * wk;
+      }
+      b[2 * n] = Math.max(-1, Math.min(1, (dL * gd + rL * grr) * l));
+      b[2 * n + 1] = Math.max(-1, Math.min(1, (dR * gd + rR * grr) * r));
+    }
+    this.phase = ph % (4 * Math.PI);   // 4 pi: keeps the sub-octave partial continuous
+    this.prev = [f, gain, gr, cl, cr, w, itd, tau];
+  }
+  process(_, outputs) {
+    const L = outputs[0][0], R = outputs[0][1] || L;
+    const before = this.consumed;
+    for (let i = 0; i < L.length; i++) {
+      if (this.pos >= this.B) { this.block(); this.pos = 0; }
+      L[i] = this.buf[2 * this.pos]; R[i] = this.buf[2 * this.pos + 1]; this.pos++;
+    }
+    if (this.consumed !== before) this.port.postMessage(this.consumed);
+    return true;
+  }
+}
+registerProcessor('av-voice', Voice);
+`;
+
+const audio = { ctx: null, node: null, ok: false, consumed: 0, soundOn: true };
+async function ensureAudio() {
+  if (audio.ctx) { await audio.ctx.resume(); return audio.ok; }
+  try {
+    audio.ctx = new AudioContext();
+    const url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' }));
+    await audio.ctx.audioWorklet.addModule(url);
+    audio.node = new AudioWorkletNode(audio.ctx, 'av-voice', { outputChannelCount: [2] });
+    audio.node.port.onmessage = (e) => onConsumed(e.data);
+    audio.node.connect(audio.ctx.destination);
+    audio.node.port.postMessage({ type: 'gate', on: audio.soundOn });
+    audio.ok = true;
+  } catch (err) {
+    audio.ok = false;
+    log('audio unavailable (' + err.message + '), running silent on the wall clock', 'note');
+  }
+  return audio.ok;
+}
+
+// -------------------------------------------------------------- the playhead
+// One list of points for both modes. pushed = points handed to the voice
+// (or to the wall clock when silent); the trail draws up to `played`.
+const play = {
+  mode: 'stopped', paused: false, gen: null, pts: [], pushed: 0, readTo: 0, breakAt: -1,
+  clockT0: 0, clockBase: 0, lead: 6,
+};
+function played() {
+  if (audio.ok) return audio.consumed;
+  return Math.min(play.pushed, play.clockBase + Math.floor((performance.now() - play.clockT0) / 10));
+}
+function pushPoints(pts) {
+  if (!pts.length) return;
+  for (const p of pts) play.pts.push(p);
+  play.pushed += pts.length;
+  if (audio.ok) audio.node.port.postMessage({ type: 'pts', pts });
+}
+function resetPlayhead() {
+  play.pts = []; play.pushed = 0; play.readTo = 0; play.breakAt = -1;
+  audio.consumed = 0; audioCut = 0;
+  if (audio.node) audio.node.port.postMessage({ type: 'reset' });
+  play.clockT0 = performance.now(); play.clockBase = 0;
+  trailPrev = null; trailHead = null;
+}
+
+// ------------------------------------------------------------ visuals (trail)
+const av = document.getElementById('av'), avx = av.getContext('2d');
+const W = av.width, H = av.height, MARGIN = 24, SS = 2;
+const XSPAN = 23, ZLO = -1, ZHI = 55;
+const trail = document.createElement('canvas'); trail.width = W * SS; trail.height = H * SS;
+const tx = trail.getContext('2d'); tx.fillStyle = '#000'; tx.fillRect(0, 0, trail.width, trail.height);
+const GAIN_LO = 0.17, GAIN_HI = 0.60, DIM = [80, 150, 40], HOT = [225, 255, 110];
+const OBS = [1.177, 24.787, 27.280];
+const gainOf = (p) => 0.03 + Math.hypot(OBS[0] - p[0], OBS[1] - p[1], OBS[2] - p[2]) / 92;
+const loud = (g) => Math.max(0, Math.min(1, (g - GAIN_LO) / (GAIN_HI - GAIN_LO)));
+const toScreen = (x, z) => [W / 2 + (x / XSPAN) * (W / 2 - MARGIN),
+  (H - MARGIN) - ((z - ZLO) / (ZHI - ZLO)) * (H - 2 * MARGIN)];
+let trailPrev = null, trailHead = null;
+
+function drawTrail() {
+  // afterglow: red and blue die faster than green, so the trace settles
+  // from warm yellow through firefly green as it fades
+  tx.globalCompositeOperation = 'multiply';
+  tx.fillStyle = 'rgb(242,252,238)'; tx.fillRect(0, 0, trail.width, trail.height);
+  tx.globalCompositeOperation = 'source-over';
+  tx.fillStyle = 'rgba(0,0,0,0.025)'; tx.fillRect(0, 0, trail.width, trail.height);
+
+  const upto = played();
+  tx.lineCap = 'round'; tx.lineWidth = 2 * SS;
+  while (play.readTo < upto && play.readTo < play.pts.length) {
+    if (play.readTo === play.breakAt) trailPrev = null;   // attractor switched: no joining line
+    const p = play.pts[play.readTo++];
+    const s = toScreen(p[0], p[2]), g = gainOf(p);
+    if (trailPrev) {
+      const t = loud(g), c = DIM.map((a, i) => Math.round(a + (HOT[i] - a) * t));
+      tx.strokeStyle = `rgb(${c})`;
+      tx.beginPath(); tx.moveTo(trailPrev[0] * SS, trailPrev[1] * SS); tx.lineTo(s[0] * SS, s[1] * SS); tx.stroke();
+    }
+    trailPrev = s; trailHead = [s, g];
+  }
+  // trim what the trail has already drawn
+  if (play.readTo > 4000) {
+    play.pts.splice(0, play.readTo - 100);
+    const cut = play.readTo - 100;
+    play.readTo -= cut; play.pushed -= cut; play.clockBase -= cut; play.breakAt -= cut;
+    audio.consumed -= cut; audioCut += cut;
+  }
+
+  avx.globalCompositeOperation = 'source-over';
+  avx.drawImage(trail, 0, 0, W, H);
+  avx.globalCompositeOperation = 'lighter';
+  avx.globalAlpha = 0.35; avx.filter = 'blur(10px)';
+  avx.drawImage(trail, 0, 0, W, H);
+  avx.filter = 'none'; avx.globalAlpha = 1; avx.globalCompositeOperation = 'source-over';
+  if (trailHead) {
+    const [[x, y], g] = trailHead, t = loud(g);
+    for (const [r, a] of [[26, 16], [16, 40], [9, 105]]) {
+      avx.fillStyle = `rgba(185,255,90,${(a * (0.35 + 0.65 * t)) / 255})`;
+      avx.beginPath(); avx.arc(x, y, r, 0, 7); avx.fill();
+    }
+    avx.fillStyle = 'rgb(255,250,205)'; avx.beginPath(); avx.arc(x, y, 2 + 2 * t, 0, 7); avx.fill();
+  }
+}
+// The worklet keeps counting from where it was; audioCut keeps the trimmed
+// list in step with that count.
+let audioCut = 0;
+function onConsumed(n) { audio.consumed = n - audioCut; }
+
+// ------------------------------------------------------------------ machine
+// Same interface for the real Uno (Web Serial) and the simulated one.
+class Machine {
+  constructor() { this.sent = 0; this.done = 0; this.cur = { n: 0, pm: 0, x: 0, y: 0 };
+    this.motors = false; this.ready = false; this.onReport = () => {}; }
+  inFlight() { return this.sent - this.done; }
+  handle(line) {
+    const t = line.trim().split(/\s+/);
+    if (t[0] === 'P') { this.cur = { n: +t[1], pm: +t[2], x: +t[3], y: +t[4] }; this.onReport(); return; }
+    if (t[0] === 'D') { this.done = +t[1]; this.onReport(); return; }
+    if (t[0] === 'ok') return;
+    log(line, line.startsWith('err') ? 'err' : '');
+    if (t[0] === 'aborted') { this.done = this.sent = +t[1]; this.onReport(); }
+    else if (t[0] === 'S') {
+      this.cur.x = +t[1]; this.cur.y = +t[2]; this.motors = t[5] === '1'; this.onReport();
+    } else if (t[0] === 'ready') { this.ready = true; onMachineReady(); }
+    else if (line.startsWith('=== ')) { setFw(line.replace(/=/g, '').trim()); }
+  }
+  move(x, y) { this.sent++; this.send(`M ${Math.round(x)} ${Math.round(y)}`, true); }
+  cmd(s) { this.send(s); }
+}
+
+class SerialMachine extends Machine {
+  async open() {
+    this.port = await navigator.serial.requestPort();
+    await this.port.open({ baudRate: 115200 });
+    this.writer = this.port.writable.getWriter();
+    this.enc = new TextEncoder();
+    this.readLoop();
+  }
+  async readLoop() {
+    const reader = this.port.readable.pipeThrough(new TextDecoderStream()).getReader();
+    this.reader = reader;
+    let buf = '';
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) { const l = buf.slice(0, i).replace('\r', ''); buf = buf.slice(i + 1); if (l) this.handle(l); }
+      }
+    } catch (e) { log('serial read stopped: ' + e.message, 'err'); }
+    setConn('off', 'disconnected');
+  }
+  send(s, quiet) {
+    if (!quiet) log('> ' + s, 'tx');
+    this.writer.write(this.enc.encode(s + (s === '!' || s === '?' ? '' : '\n')));
+  }
+}
+
+// A stand-in Uno: same protocol, same timing (no slack), so Draw mode can
+// be tried with nothing plugged in.
+class SimMachine extends Machine {
+  constructor() {
+    super(); this.q = []; this.pos = [0, 0]; this.tgt = [0, 0]; this.sps = 60 * STEPS_PER_DEG;
+    this.moving = null; this.lastP = 0; this.accepted = 0; this.doneN = 0;
+    this.timer = setInterval(() => this.tick(), 10);
+    setTimeout(() => { ['=== Etchatron controller (simulated) ===', 'ready'].forEach((l) => this.handle(l)); }, 150);
+  }
+  reply(l) { setTimeout(() => this.handle(l), 0); }
+  send(s, quiet) {
+    if (!quiet) log('> ' + s, 'tx');
+    const t = s.trim().split(/\s+/), c = t[0];
+    if (c === '!') { this.q = []; this.moving = null; this.doneN = this.accepted; this.tgt = [...this.pos];
+      this.reply('aborted ' + this.doneN); return; }
+    if (c === '?') { this.reply(`S ${Math.round(this.pos[0])} ${Math.round(this.pos[1])} ${this.q.length} ${this.doneN} ${this.motors ? 1 : 0} 0 0 0 ${Math.round(this.sps)}`); return; }
+    if (c === 'M' || c === 'J') {
+      const a = +t[1], b = +t[2];
+      const p = c === 'M' ? [a, b] : [this.tgt[0] + a, this.tgt[1] + b];
+      this.q.push(p); this.tgt = p; this.accepted++; return;
+    }
+    if (c === 'Z') { this.pos = [0, 0]; this.tgt = [0, 0]; }
+    if (c === 'E') { this.motors = t[1] === '1'; }
+    if (c === 'F') { this.sps = +t[1]; }
+    this.reply('ok');
+  }
+  tick() {
+    let budget = this.sps * 0.01;
+    while (budget > 0) {
+      if (!this.moving) {
+        if (!this.q.length) return;
+        const to = this.q.shift();
+        this.moving = { from: [...this.pos], to, n: Math.max(Math.abs(to[0] - this.pos[0]), Math.abs(to[1] - this.pos[1])), i: 0 };
+        if (this.moving.n === 0) { this.finish(); continue; }
+      }
+      const m = this.moving, k = Math.min(budget, m.n - m.i);
+      m.i += k; budget -= k;
+      const f = m.i / m.n;
+      this.pos = [m.from[0] + (m.to[0] - m.from[0]) * f, m.from[1] + (m.to[1] - m.from[1]) * f];
+      if (m.i >= m.n) this.finish();
+    }
+    if (this.moving && performance.now() - this.lastP > 50) {
+      this.lastP = performance.now();
+      this.handle(`P ${this.doneN + 1} ${Math.floor(1000 * this.moving.i / this.moving.n)} ${Math.round(this.pos[0])} ${Math.round(this.pos[1])}`);
+    }
+  }
+  finish() {
+    this.pos = [...this.moving.to]; this.moving = null; this.doneN++;
+    this.handle(`P ${this.doneN} 1000 ${this.pos[0]} ${this.pos[1]}`);
+    this.handle('D ' + this.doneN);
+  }
+}
+
+let machine = null;
+
+// --------------------------------------------------------------- draw mode
+// moveFrom[n] / movePts[n]: canonical start and end of move n (1-based), so
+// a progress report (n, per mille) gives a 3D point for the voice.
+const draw = { movePts: [], base: 0, lastPushed: null, easPath: [] };
+
+function settings() {
+  const v = (id) => +document.getElementById(id).value;
+  return { scale: v('cScale'), speed: v('cSpeed'), slackX: v('cSlackX'), slackY: v('cSlackY'),
+    blend: v('cBlend'), limit: v('cLimit') };
+}
+function sendSettings() {
+  if (!machine) return;
+  const s = settings();
+  machine.cmd(`B ${Math.round(s.slackX * STEPS_PER_DEG)} ${Math.round(s.slackY * STEPS_PER_DEG)} ${s.blend}`);
+  machine.cmd(`F ${Math.round(s.speed * STEPS_PER_DEG)}`);
+}
+function toSteps(p) {
+  const s = settings(), k = s.scale * STEPS_PER_DEG, lim = s.limit * STEPS_PER_DEG;
+  const c = (v) => Math.max(-lim, Math.min(lim, v));
+  return [c((p[0] - XC) * k), c((p[2] - ZC) * k)];
+}
+
+function stylusPoint() {
+  if (!machine || !draw.movePts.length) return null;
+  // move numbers are the firmware's running count; base = count at Draw
+  const n = machine.cur.n - draw.base, d = machine.done - draw.base;
+  let i = d, f = 1;
+  if (n > d) { i = n; f = machine.cur.pm / 1000; }
+  if (i < 1) return draw.movePts[0];
+  i = Math.min(i, draw.movePts.length - 1);
+  const a = draw.movePts[i - 1], b = draw.movePts[i];
+  return a.map((v, j) => v + (b[j] - v) * f);
+}
+
+function feedMachine() {
+  if (play.paused || !machine || !machine.ready) return;
+  while (machine.inFlight() < WINDOW) {
+    const p = play.gen.step();
+    draw.movePts.push(p);
+    const [x, y] = toSteps(p);
+    machine.move(x, y);
+  }
+}
+
+// The voice is fed the stylus: enough points to stay `lead` blocks ahead,
+// interpolated from the last point fed to where the stylus is now.
+function feedVoiceFromStylus() {
+  const now = stylusPoint();
+  if (!now) return;
+  const need = play.lead - (play.pushed - played());
+  if (need <= 0) return;
+  const from = draw.lastPushed || now, pts = [];
+  for (let i = 1; i <= need; i++) pts.push(from.map((v, j) => v + (now[j] - v) * (i / need)));
+  draw.lastPushed = now;
+  pushPoints(pts);
+}
+
+// ------------------------------------------------------------- Etch A Sketch view
+const eas = document.getElementById('eas'), ex = eas.getContext('2d');
+function drawEas() {
+  const s = settings();
+  const ew = eas.width, eh = eas.height;
+  const span = Math.max(s.limit * 1.15, 200);              // knob degrees across half the height
+  const k = (eh / 2) / span;
+  const P = (xd, yd) => [ew / 2 + xd * k, eh / 2 - yd * k];
+  ex.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--eas');
+  ex.fillRect(0, 0, ew, eh);
+  ex.strokeStyle = '#8a8f89'; ex.setLineDash([6, 6]); ex.lineWidth = 1.5;
+  const [lx, ly] = P(-s.limit, s.limit); ex.strokeRect(lx, ly, 2 * s.limit * k, 2 * s.limit * k);
+  ex.setLineDash([]);
+  ex.strokeStyle = '#b4b8b3'; ex.beginPath(); ex.moveTo(ew / 2, 0); ex.lineTo(ew / 2, eh);
+  ex.moveTo(0, eh / 2); ex.lineTo(ew, eh / 2); ex.stroke();
+  // what the stylus has drawn
+  ex.strokeStyle = '#2b2b2b'; ex.lineWidth = 1.6; ex.lineJoin = 'round';
+  ex.beginPath();
+  draw.easPath.forEach(([xd, yd], i) => { const [a, b] = P(xd, yd); i ? ex.lineTo(a, b) : ex.moveTo(a, b); });
+  ex.stroke();
+  // what is queued ahead
+  if (machine && draw.movePts.length && play.mode === 'draw') {
+    ex.strokeStyle = 'rgba(0,110,220,0.55)'; ex.lineWidth = 1.2; ex.beginPath();
+    const from = Math.max(0, machine.done - draw.base);
+    for (let i = from; i < draw.movePts.length; i++) {
+      const [x, y] = toSteps(draw.movePts[i]); const [a, b] = P(x / STEPS_PER_DEG, y / STEPS_PER_DEG);
+      i === from ? ex.moveTo(a, b) : ex.lineTo(a, b);
+    }
+    ex.stroke();
+  }
+  // stylus
+  if (machine) {
+    const [a, b] = P(machine.cur.x / STEPS_PER_DEG, machine.cur.y / STEPS_PER_DEG);
+    ex.fillStyle = '#c8102e'; ex.beginPath(); ex.arc(a, b, 5, 0, 7); ex.fill();
+  }
+}
+function recordStylus() {
+  if (!machine) return;
+  const p = [machine.cur.x / STEPS_PER_DEG, machine.cur.y / STEPS_PER_DEG];
+  const l = draw.easPath[draw.easPath.length - 1];
+  if (!l || Math.hypot(p[0] - l[0], p[1] - l[1]) > 0.5) draw.easPath.push(p);
+}
+
+// --------------------------------------------------------------- main loop
+function frame() {
+  if (play.mode === 'screen' && !play.paused) {
+    const need = play.lead - (play.pushed - played());
+    const pts = [];
+    for (let i = 0; i < need; i++) pts.push(play.gen.step());
+    pushPoints(pts);
+  } else if (play.mode === 'draw') {
+    feedMachine();
+    feedVoiceFromStylus();
+  }
+  drawTrail();
+  drawEas();
+  updateStats();
+  requestAnimationFrame(frame);
+}
+
+// --------------------------------------------------------------- controls
+const $ = (id) => document.getElementById(id);
+function log(s, cls) {
+  const el = $('log'), d = document.createElement('div');
+  if (cls) d.className = cls; d.textContent = s; el.appendChild(d);
+  while (el.childNodes.length > 300) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+function setConn(cls, text) { const c = $('conn'); c.className = 'chip ' + cls; c.textContent = text; }
+function setFw(t) { const f = $('fw'); f.hidden = false; f.className = 'chip on'; f.textContent = t; }
+
+let selected = 0;
+ATTRACTORS.forEach((a, i) => {
+  const b = document.createElement('button'); b.textContent = a.name; b.dataset.i = i;
+  b.onclick = () => selectAttractor(i); $('attractors').appendChild(b);
+});
+function selectAttractor(i) {
+  selected = i;
+  [...$('attractors').children].forEach((b) => b.classList.toggle('active', +b.dataset.i === i));
+  if (play.mode === 'screen') { play.gen = newGen(); play.breakAt = play.pushed; }   // switch live, like the original
+}
+selectAttractor(0);
+function newGen() { const g = new Gen(selected); $('sStart').textContent = g.startText; return g; }
+
+async function startScreen() {
+  if (play.mode === 'draw') stopAll();
+  await ensureAudio();
+  resetPlayhead();
+  play.gen = newGen(); play.mode = 'screen'; play.paused = false;
+  modeButtons();
+}
+
+// Before drawing, run the attractor silently to the point nearest the
+// centre of the box, so the first move from a centred stylus is tiny.
+function warmToCentre(g) {
+  for (let i = 0; i < 500; i++) g.step();
+  let best = Infinity, bestState = null, bestSteps = 0;
+  for (let i = 0; i < 20000; i++) {
+    const p = g.step(), d = Math.hypot(p[0] - XC, p[2] - ZC);
+    if (d < best) { best = d; bestState = [...g.r]; bestSteps = g.steps; }
+  }
+  g.r = bestState; g.steps = bestSteps;
+  return g.canon();
+}
+
+async function startDraw() {
+  if (!machine || !machine.ready) { log('connect the Uno or press Simulate machine first', 'note'); return; }
+  if (play.mode === 'screen') stopAll();
+  await ensureAudio();
+  resetPlayhead();
+  play.gen = newGen();
+  const p0 = warmToCentre(play.gen);
+  draw.movePts = [p0];   // move base+n goes from movePts[n-1] to movePts[n]
+  draw.base = machine.sent;
+  draw.lastPushed = null;
+  sendSettings();
+  if (!machine.motors) { machine.cmd('E 1'); machine.motors = true; }
+  play.mode = 'draw'; play.paused = false;
+  modeButtons();
+  log(`drawing ${ATTRACTORS[selected].name} from the centre`, 'note');
+}
+
+function stopAll() {
+  if (play.mode === 'draw' && machine) machine.cmd('!');
+  play.mode = 'stopped'; play.paused = false;
+  if (audio.node) audio.node.port.postMessage({ type: 'reset' });
+  modeButtons();
+}
+
+function modeButtons() {
+  $('btnScreen').classList.toggle('active', play.mode === 'screen');
+  $('btnDraw').classList.toggle('active', play.mode === 'draw');
+  $('btnPause').disabled = play.mode === 'stopped';
+  $('btnPause').textContent = play.paused ? 'Resume' : 'Pause';
+  $('sMode').textContent = play.mode === 'stopped' ? 'stopped'
+    : (play.mode === 'screen' ? 'screen, real time' : 'drawing, stylus pace') + (play.paused ? ' (paused)' : '');
+}
+
+function updateStats() {
+  $('sSteps').textContent = play.gen ? play.gen.steps : 0;
+  if (!machine) return;
+  $('sPos').textContent = `X ${(machine.cur.x / STEPS_PER_DEG).toFixed(1)}°  Y ${(machine.cur.y / STEPS_PER_DEG).toFixed(1)}°`;
+  $('sQueue').textContent = `${machine.inFlight()} in flight`;
+  $('sDone').textContent = machine.done;
+  $('sMotors').textContent = machine.motors ? 'on' : 'off (knobs free)';
+  $('btnMotors').textContent = machine.motors ? 'Motors off' : 'Motors on';
+  $('zeroHint').hidden = machine.motors;
+}
+
+function onMachineReady() {
+  sendSettings();
+  machine.cmd('?');
+}
+
+$('btnConnect').onclick = async () => {
+  if (!('serial' in navigator)) {
+    log('Web Serial is not available here. Use Chrome or Edge; if this is file://, serve the folder with python -m http.server and open localhost.', 'err');
+    return;
+  }
+  try {
+    const m = new SerialMachine(); machine = m;
+    m.onReport = () => recordStylus();
+    await m.open();
+    setConn('on', 'Uno connected');
+    log('port open, waiting for the controller banner (the Uno resets on connect)', 'note');
+    setTimeout(() => { if (machine === m && !m.ready) log('no "ready" yet: is controller.ino flashed? Lorenz or spiral sketches will not answer.', 'err'); }, 4000);
+  } catch (e) { log('connect failed: ' + e.message, 'err'); machine = null; }
+};
+$('btnSim').onclick = () => {
+  machine = new SimMachine(); machine.onReport = () => recordStylus();
+  setConn('sim', 'simulated machine');
+};
+$('btnStop').onclick = () => { stopAll(); if (machine) machine.cmd('!'); };
+$('btnScreen').onclick = startScreen;
+$('btnDraw').onclick = startDraw;
+$('btnPause').onclick = () => { play.paused = !play.paused; modeButtons(); };
+$('btnRestart').onclick = () => { if (play.mode === 'screen') { resetPlayhead(); play.gen = newGen(); } };
+$('btnSound').onclick = () => {
+  audio.soundOn = !audio.soundOn;
+  if (audio.node) audio.node.port.postMessage({ type: 'gate', on: audio.soundOn });
+  $('btnSound').classList.toggle('active', audio.soundOn);
+  $('btnSound').textContent = audio.soundOn ? 'Sound on' : 'Sound off';
+};
+$('btnShake').onclick = () => { draw.easPath = []; };
+$('btnMotors').onclick = () => { if (!machine) return; machine.motors = !machine.motors; machine.cmd('E ' + (machine.motors ? 1 : 0)); };
+$('btnZero').onclick = () => { if (!machine) return; machine.cmd('Z'); machine.cur.x = machine.cur.y = 0; draw.easPath = []; };
+$('btnHome').onclick = () => { if (!machine || play.mode === 'draw') return; machine.sent++; machine.cmd('M 0 0'); };
+document.querySelectorAll('[data-jog]').forEach((b) => b.onclick = () => {
+  if (!machine || play.mode === 'draw') return;
+  if (!machine.motors) { log('motors are off, turn them on to jog', 'note'); return; }
+  const [dx, dy] = b.dataset.jog.split(',').map(Number), st = +$('jogStep').value * STEPS_PER_DEG;
+  machine.sent++; machine.cmd(`J ${Math.round(dx * st)} ${Math.round(dy * st)}`);
+});
+$('btnSend').onclick = sendSettings;
+const sendRaw = () => { const v = $('cmd').value.trim(); if (!v || !machine) return;
+  if (/^[MJ]\b/.test(v)) machine.sent++; machine.cmd(v); $('cmd').value = ''; };
+$('btnCmd').onclick = sendRaw;
+$('cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendRaw(); });
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key >= '1' && e.key <= '5') selectAttractor(+e.key - 1);
+  if (e.key === 'Escape') $('btnStop').click();
+});
+
+if (!('serial' in navigator)) log('Web Serial not available in this browser: Simulate machine still works.', 'note');
+log('Etchatron control ready. Connect the Uno (controller.ino) or Simulate machine.', 'note');
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
