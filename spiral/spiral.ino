@@ -30,15 +30,18 @@
 // Start: wipe the screen, centre the stylus, press reset. Serial 115200: any
 // byte pauses / resumes.
 
-#define VERSION "0.3.1"
+#define VERSION "0.4.0"
 
 // ---- tune these -----------------------------------------------------------
 #define TURNS         8
 #define PITCH_DEG     50.0    // knob degrees between rings: radius 400 at 8 turns
 #define CHORD_DEG     4.0     // segment length along the curve
 #define MAX_DEG_S     60.0    // same as lorenz.ino
-#define BACKLASH_X_DEG 18.0   // extra knob degrees on every X reversal (ladder 21 Oct)
-#define BACKLASH_Y_DEG 12.0   // extra knob degrees on every Y reversal (ladder 21 Oct)
+#define BACKLASH_X_DEG 23.0   // extra knob degrees on every X reversal
+#define BACKLASH_Y_DEG 17.0   // extra knob degrees on every Y reversal
+#define BLEND         1       // extra slack steps per drawn step after a reversal.
+                              // 0 = all at once (v0.3 and earlier, notches);
+                              // 1 = that knob runs double speed until taken up
 #define INVERT_X      0
 #define INVERT_Y      0
 #define START_DELAY_S 3
@@ -64,6 +67,7 @@ const int X_STEP = 2, Y_STEP = 3, X_DIR = 5, Y_DIR = 6, EN = 8;
 
 long posX = 0, posY = 0;     // commanded position in steps, backlash steps excluded
 int lastDirX = 0, lastDirY = 0;   // +1 / -1, 0 = not moved yet
+long pendX = 0, pendY = 0;   // slack steps still owed since the last reversal
 
 void setDir(int pin, bool positive, bool invert) {
   digitalWrite(pin, (positive != invert) ? LOW : HIGH);   // LOW = positive, as GRBL
@@ -90,14 +94,36 @@ void checkSerial() {
 }
 
 // Take up slack on a reversal: extra steps that move the motor but are not
-// counted, because the stylus shouldn't move during them. The first move
-// counts as a reversal too, since nobody knows which side of the slack the
-// stylus was left on.
+// counted, because the stylus shouldn't move during them. The first move is
+// not compensated: nobody knows which side of the slack it was left on.
+//
+// v0.4: BLENDED take-up. The ladder (v0.3.0) showed the EaS slack is part
+// dead gap, part springy string: a burst big enough to keep circles round
+// (~23/17) overshoots the springy part and leaves a sharp step, and one
+// small enough to leave no step (~18/12) leaves a flat. So instead of a
+// burst, the slack is owed (pendX/pendY) and paid off BLEND extra steps per
+// drawn step on that axis. An axis is barely moving at its reversal, so the
+// take-up spreads over the start of the curve instead of happening on the
+// spot. If the axis reverses again before it is paid off, only what was
+// actually taken up has to be crossed back: pend = BL - pend.
 void takeUp(int stepPin, long n) {
   for (long i = 0; i < n; i++) {
     unsigned long t0 = micros();
     pulse(stepPin);
     while (micros() - t0 < STEP_US) {}
+  }
+}
+
+void reversal(int stepPin, long bl, long &pend) {
+  if (BLEND == 0) { takeUp(stepPin, bl); pend = 0; }
+  else pend = bl - pend;
+}
+
+void payOff(int stepPin, long &pend) {
+  for (int k = 0; k < BLEND && pend > 0; k++) {
+    delayMicroseconds(150);
+    pulse(stepPin);
+    pend--;
   }
 }
 
@@ -109,15 +135,15 @@ void moveTo(long tx, long ty) {
   setDir(Y_DIR, py, INVERT_Y);
   delayMicroseconds(5);
   int sx = px ? 1 : -1, sy = py ? 1 : -1;
-  if (dx != 0 && sx != lastDirX) { if (lastDirX != 0) takeUp(X_STEP, BL_X); lastDirX = sx; }
-  if (dy != 0 && sy != lastDirY) { if (lastDirY != 0) takeUp(Y_STEP, BL_Y); lastDirY = sy; }
+  if (dx != 0 && sx != lastDirX) { if (lastDirX != 0) reversal(X_STEP, BL_X, pendX); lastDirX = sx; }
+  if (dy != 0 && sy != lastDirY) { if (lastDirY != 0) reversal(Y_STEP, BL_Y, pendY); lastDirY = sy; }
   dx = labs(dx); dy = labs(dy);
   long n = max(dx, dy), ex = 0, ey = 0;
   for (long i = 0; i < n; i++) {
     unsigned long t0 = micros();
     ex += dx; ey += dy;
-    if (ex >= n) { ex -= n; pulse(X_STEP); posX += sx; }
-    if (ey >= n) { ey -= n; pulse(Y_STEP); posY += sy; }
+    if (ex >= n) { ex -= n; pulse(X_STEP); posX += sx; payOff(X_STEP, pendX); }
+    if (ey >= n) { ey -= n; pulse(Y_STEP); posY += sy; payOff(Y_STEP, pendY); }
     while (micros() - t0 < STEP_US) {}
   }
 }
@@ -136,7 +162,8 @@ void setup() {
   Serial.print("turns "); Serial.print(TURNS);
   Serial.print("  pitch deg "); Serial.print(PITCH_DEG, 1);
   Serial.print("  backlash deg X "); Serial.print(BACKLASH_X_DEG, 1);
-  Serial.print(" Y "); Serial.println(BACKLASH_Y_DEG, 1);
+  Serial.print(" Y "); Serial.print(BACKLASH_Y_DEG, 1);
+  Serial.print("  blend "); Serial.println(BLEND);
   for (int s = START_DELAY_S; s > 0; s--) {
     Serial.print("start in "); Serial.println(s);
     delay(1000);
