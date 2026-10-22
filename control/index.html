@@ -212,7 +212,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.4.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine
+const PAGE_VERSION = '0.4.1';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -750,7 +750,7 @@ function renderOutputs() {
   const sel = outputs.plotters.find((q) => q.id === outputs.selected);
   const piEas = !!(sel && sel.driver === 'etchatron');
   $('viewSub').textContent = isEas ? '(knob degrees, dashed box = limits)'
-    : piEas ? '(knob degrees, the stylus starts in the centre)' : '(the sheet at the plotter\'s size, red dot = home corner)';
+    : piEas ? '(knob degrees, the stylus starts in the centre)' : '(the sheet as the curve studio shows it)';
   $('parkedText').textContent = piEas ? ' Stylus is in the centre of the screen' : ' Carriage is parked in its home corner';
   $('viewWrap').classList.toggle('paper', !isEas);
   $('btnDraw').textContent = isEas ? 'Draw on Etch A Sketch' : `Plot on ${outputs.selected.split('/').pop()}`;
@@ -887,8 +887,11 @@ function drawPaper() {
     ex.strokeStyle = '#a9aea8'; ex.beginPath(); ex.moveTo(ew / 2, y0); ex.lineTo(ew / 2, y0 + H * k);
     ex.moveTo(x0, eh / 2); ex.lineTo(x0 + W * k, eh / 2); ex.stroke();   // the stylus starts where these cross
   } else {
+    // Same frame as piplot's curve studio: the machine's travel as the sheet,
+    // (0, 0) top left, y down. No home corner is drawn: where each machine
+    // parks is piplot's business, and a guessed marker here was wrong for
+    // suidraw-0 (its home is top right).
     ex.fillStyle = '#fbfaf5'; ex.fillRect(x0, y0, W * k, H * k);
-    ex.fillStyle = '#c8102e'; ex.beginPath(); ex.arc(x0, y0, 5, 0, 7); ex.fill();   // home corner
   }
   if (play.mode !== 'plot' || !plot.mm.length) return;
   const P = ([x, y]) => [x0 + x * k, y0 + y * k];
