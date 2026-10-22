@@ -139,7 +139,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
       <h2>Output</h2>
       <div id="outputs"></div>
       <div id="plotOpts" hidden>
-        <label class="f">Plot length, attractor steps <input id="pSteps" type="number" value="5000" step="500" min="200" max="50000"></label>
+        <label class="f">Plot length, attractor steps (AxiDraw) <input id="pSteps" type="number" value="5000" step="500" min="200" max="50000"></label>
         <label class="f">Margin (mm; knob &deg; on the Etch A Sketch) <input id="pMargin" type="number" value="15" step="5" min="0"></label>
         <label class="f">Plot password <input id="pPass" type="password" autocomplete="off" placeholder="studio password"></label>
         <label class="chk"><input id="pParked" type="checkbox"><span id="parkedText"> Carriage is parked in its home corner</span></label>
@@ -212,7 +212,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.4.1';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner
+const PAGE_VERSION = '0.5.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions)
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -753,14 +753,17 @@ function renderOutputs() {
     : piEas ? '(knob degrees, the stylus starts in the centre)' : '(the sheet as the curve studio shows it)';
   $('parkedText').textContent = piEas ? ' Stylus is in the centre of the screen' : ' Carriage is parked in its home corner';
   $('viewWrap').classList.toggle('paper', !isEas);
-  $('btnDraw').textContent = isEas ? 'Draw on Etch A Sketch' : `Plot on ${outputs.selected.split('/').pop()}`;
+  const live = !!(sel && SESSION_DRIVERS.includes(sel.driver));
+  $('btnDraw').textContent = isEas ? 'Draw on Etch A Sketch'
+    : live ? `Draw on ${outputs.selected.split('/').pop()}` : `Plot on ${outputs.selected.split('/').pop()}`;
+  $('pSteps').closest('label').hidden = isEas || live;   // only a fixed plot has a length
 }
 
 // --------------------------------------------------------- plotting (piplot)
 // A plotter gets the whole drawing in one go: piplot checks it against the
 // machine's envelope, then draws it. The sound and trail then follow the pen
 // from piplot's progress (segments done of total).
-const plot = { entry: null, pts: [], mm: [], frac: 0, timer: null };
+const plot = { entry: null, pts: [], mm: [], frac: 0, timer: null, session: false };
 
 function fitToPaper(pts, travel, margin, rotate) {
   // u right, v up, in attractor units; same rotation as the Etch A Sketch
@@ -801,6 +804,108 @@ function askForPassword(wrong) {
     : 'type the studio plot password into "Plot password" under Output (the same one the visitor panel asks for), then press Plot again', 'note');
 }
 
+
+// ---------------------------------------------------- live sessions (piplot)
+// Machines piplot can hold open and feed as a drawing grows. On these Draw
+// runs until Stop: the attractor goes out in pieces of one unbroken line,
+// each piece starting on the last point of the one before, kept a short
+// lead ahead of the pen so it never waits and lifts. The AxiDraws cannot do
+// sessions in piplot, so they keep the fixed-length plot above.
+const SESSION_DRIVERS = ['grbl', 'polargraph', 'etchatron'];
+const sess = { id: '', sent: 0, piece: 80, lead: 320, busy: false, toMm: null };
+
+// The sheet is sized from a long silent run of the same attractor from the
+// same start, since a drawing that never ends cannot be fitted afterwards.
+function boundsAhead(gen, rotate, n = 40000) {
+  const g = new Gen(gen.index); g.r = [...gen.r];
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const p = g.step(), u = rotate ? p[2] : p[0], v = rotate ? -p[0] : p[2];
+    u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+  }
+  return [u0, u1, v0, v1];
+}
+function paperMapper([u0, u1, v0, v1], travel, margin, rotate) {
+  const [W, H] = travel, m = Math.max(0, margin);
+  const k = Math.min((W - 2 * m) / (u1 - u0), (H - 2 * m) / (v1 - v0));
+  const ox = (W - (u1 - u0) * k) / 2, oy = (H - (v1 - v0) * k) / 2;
+  const r2 = (v) => Math.round(v * 100) / 100;
+  // a rare excursion past the pre-run's box is held at the margin, never past the sheet
+  const cx = (v) => Math.max(m, Math.min(W - m, v)), cy = (v) => Math.max(m, Math.min(H - m, v));
+  return (p) => {
+    const u = rotate ? p[2] : p[0], v = rotate ? -p[0] : p[2];
+    return [r2(cx(ox + (u - u0) * k)), r2(cy(oy + (v1 - v) * k))];
+  };
+}
+
+async function sessionCall(o, body) {
+  const r = await fetch(o.host.base + '/api/session', { method: 'POST', headers: plotHeaders(),
+    body: JSON.stringify({ ...body, port: o.label }) });
+  return [r, await r.json()];
+}
+
+async function startSession(o) {
+  if (!$('pParked').checked) {
+    log(o.driver === 'etchatron' ? 'tick "Stylus is in the centre of the screen" first: the Uno takes wherever it is as the centre'
+      : 'tick "Carriage is parked in its home corner" first: no plotter here has home switches', 'err'); return;
+  }
+  if (play.mode !== 'stopped') stopAll();
+  await ensureAudio();
+  resetPlayhead();
+  play.gen = newGen();
+  draw.rotate = $('cRotate').checked;
+  sess.toMm = paperMapper(boundsAhead(play.gen, draw.rotate), o.travel, +$('pMargin').value, draw.rotate);
+  let r, j;
+  try { [r, j] = await sessionCall(o, { action: 'start', origin_confirmed: true }); }
+  catch (e) { log('session request failed: ' + e.message, 'err'); return; }
+  if (!r.ok || !j.ok) {
+    log(`${o.id} refused: ${j.message || r.status}`, 'err');
+    if (j.need_password) askForPassword(/wrong/.test(j.message || ''));
+    return;
+  }
+  const p0 = play.gen.canon();
+  Object.assign(plot, { entry: o, pts: [p0], mm: [sess.toMm(p0)], frac: 0, session: true });
+  sess.id = 'attractor-' + Date.now(); sess.sent = 0; sess.busy = false;
+  draw.lastPushed = null;
+  play.mode = 'plot'; play.paused = false;
+  $('pParked').checked = false;
+  modeButtons();
+  log(`${o.id}: ${j.message || 'session open'}, drawing until Stop`, 'note');
+  clearInterval(plot.timer);
+  plot.timer = setInterval(sessionTick, 300);
+}
+
+async function sessionTick() {
+  const o = plot.entry;
+  if (!o || play.mode !== 'plot' || !plot.session) { clearInterval(plot.timer); return; }
+  if (sess.busy) return;
+  sess.busy = true;
+  try {
+    const j = await (await fetch(`${o.host.base}/api/status?port=${encodeURIComponent(o.label)}`, { cache: 'no-store' })).json();
+    const done = j.done || 0;
+    plot.frac = done / Math.max(1, plot.pts.length - 1);
+    if (!j.busy && sess.sent > 0) {
+      clearInterval(plot.timer);
+      log(`${o.id}: ${j.state}${j.message ? ', ' + j.message : ''}`, j.state === 'error' ? 'err' : 'note');
+      play.mode = 'stopped'; plot.session = false;
+      if (audio.node) audio.node.port.postMessage({ type: 'reset' });
+      modeButtons(); pollPlotters();
+      return;
+    }
+    if (!play.paused && sess.sent - done < sess.lead) {
+      const fresh = [];
+      for (let i = 0; i < sess.piece; i++) fresh.push(play.gen.step());
+      const mm = [plot.mm[plot.mm.length - 1], ...fresh.map(sess.toMm)];
+      const [r, a] = await sessionCall(o, { action: 'add', pieces: [{ id: sess.id, points: mm, end: false }] });
+      if (!r.ok || !a.ok) { log(`${o.id} would not take the next piece: ${a.message || r.status}`, 'err'); stopAll(); return; }
+      for (const p of fresh) plot.pts.push(p);
+      for (const q of mm.slice(1)) plot.mm.push(q);
+      sess.sent += sess.piece;
+    }
+  } catch (e) { /* a missed tick is fine, the next one catches up */ }
+  finally { sess.busy = false; }
+}
+
 async function startPlot(o) {
   if (!$('pParked').checked) {
     log(o.driver === 'etchatron' ? 'tick "Stylus is in the centre of the screen" first: the Uno takes wherever it is as the centre'
@@ -827,7 +932,7 @@ async function startPlot(o) {
     if (j.need_password) askForPassword(/wrong/.test(j.message || ''));
     return;
   }
-  Object.assign(plot, { entry: o, pts, mm, frac: 0 });
+  Object.assign(plot, { entry: o, pts, mm, frac: 0, session: false });
   draw.lastPushed = null;
   play.mode = 'plot'; play.paused = false;
   $('pParked').checked = false;   // confirm again before the next plot, like piplot's own pages
@@ -1000,11 +1105,11 @@ function stopAll() {
 function modeButtons() {
   $('btnScreen').classList.toggle('active', play.mode === 'screen');
   $('btnDraw').classList.toggle('active', play.mode === 'draw' || play.mode === 'plot');
-  $('btnPause').disabled = play.mode === 'stopped' || play.mode === 'plot';   // piplot has no pause
+  $('btnPause').disabled = play.mode === 'stopped' || (play.mode === 'plot' && !plot.session);   // a fixed plot has no pause
   $('btnPause').textContent = play.paused ? 'Resume' : 'Pause';
   $('sMode').textContent = play.mode === 'stopped' ? 'stopped'
     : (play.mode === 'screen' ? 'screen, real time'
-      : play.mode === 'plot' ? `plotting on ${plot.entry.id}, pen pace` : 'drawing, stylus pace') + (play.paused ? ' (paused)' : '');
+      : play.mode === 'plot' ? `${plot.session ? 'drawing until Stop' : 'plotting'} on ${plot.entry.id}, pen pace` : 'drawing, stylus pace') + (play.paused ? ' (paused)' : '');
 }
 
 function updateStats() {
@@ -1055,7 +1160,7 @@ $('btnDraw').onclick = () => {
   if (outputs.selected === 'eas') return startDraw();
   const o = outputs.plotters.find((p) => p.id === outputs.selected);
   if (!o || !o.ok) { log('that output is not available right now', 'err'); return; }
-  startPlot(o);
+  if (SESSION_DRIVERS.includes(o.driver)) startSession(o); else startPlot(o);
 };
 $('btnPause').onclick = () => { play.paused = !play.paused; modeButtons(); };
 $('btnRestart').onclick = () => { if (play.mode === 'screen') { resetPlayhead(); play.gen = newGen(); } };
