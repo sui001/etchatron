@@ -83,6 +83,7 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var
 label.f { display: grid; grid-template-columns: 1fr 90px; align-items: center; gap: 8px;
   margin-bottom: 6px; color: var(--label); }
 .eas-wrap.paper { background: var(--panel-2); }
+input.need { border-color: var(--warn); box-shadow: 0 0 0 2px var(--warn); }
 input[type=number], input[type=text], input[type=password], select { font: inherit; color: var(--text); background: #0f130e;
   border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; width: 100%; }
 #log { height: 170px; overflow: auto; background: #070907; border: 1px solid var(--line);
@@ -140,7 +141,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
       <div id="plotOpts" hidden>
         <label class="f">Plot length, attractor steps <input id="pSteps" type="number" value="5000" step="500" min="200" max="50000"></label>
         <label class="f">Margin, mm <input id="pMargin" type="number" value="15" step="5" min="0"></label>
-        <label class="f">Plot password (piplot asks over HTTPS) <input id="pPass" type="password" autocomplete="off"></label>
+        <label class="f">Plot password <input id="pPass" type="password" autocomplete="off" placeholder="studio password"></label>
         <label class="chk"><input id="pParked" type="checkbox"> Carriage is parked in its home corner</label>
       </div>
     </section>
@@ -211,7 +212,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.3.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters)
+const PAGE_VERSION = '0.3.1';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -673,12 +674,20 @@ function recordStylus() {
 // Where Draw goes: the Uno on this laptop, or any plotter a piplot server
 // reports. piplot lists every configured machine with `attached` (plugged
 // in) and `busy` (drawing), so the list can grey out the ones that are not
-// usable right now and say why. The HTTPS addresses are the Tailscale ones:
-// this page is HTTPS, and a browser will not let it call plain http.
+// usable right now and say why.
+//
+// Two ways in, picked by how this page was loaded:
+//   https (the copy on plotterpi :8443): the Tailscale HTTPS names, since an
+//     HTTPS page may not call plain http. Those requests reach piplot from
+//     loopback, so piplot treats them as visitors and wants the plot password.
+//   http://localhost (served on the laptop): straight to the tailnet address.
+//     piplot sees a tailnet peer and needs no password.
 const PLOTTER_HOSTS = [
-  { name: 'plotterpi', base: 'https://plotterpi.tail405153.ts.net' },
-  { name: 'polarpi', base: 'https://polarpi.tail405153.ts.net' },
+  { name: 'plotterpi', https: 'https://plotterpi.tail405153.ts.net', tailnet: 'http://100.68.139.69:8080' },
+  { name: 'polarpi', https: 'https://polarpi.tail405153.ts.net', tailnet: 'http://100.80.99.46:8080' },
 ];
+const VIA_TAILNET = location.protocol === 'http:';
+PLOTTER_HOSTS.forEach((h) => { h.base = VIA_TAILNET ? h.tailnet : h.https; });
 const outputs = { selected: 'eas', plotters: [], sig: '' };
 
 async function pollHost(h) {
@@ -761,6 +770,26 @@ function plotHeaders() {
   return h;
 }
 
+// The password box only matters on the HTTPS copy. Kept for this tab only
+// (sessionStorage), so it is typed once per visit, not stored on the laptop.
+function setupPassword() {
+  const box = $('pPass'), row = box.closest('label');
+  if (VIA_TAILNET) { row.hidden = true; return; }
+  try { box.value = sessionStorage.getItem('etchatron-plot-pw') || ''; } catch (e) {}
+  box.addEventListener('input', () => {
+    box.classList.remove('need');
+    try { sessionStorage.setItem('etchatron-plot-pw', box.value); } catch (e) {}
+  });
+}
+function askForPassword(wrong) {
+  const box = $('pPass');
+  box.classList.add('need');
+  box.closest('label').hidden = false;
+  box.scrollIntoView({ block: 'center' }); box.focus();
+  log(wrong ? 'that plot password was wrong: check it and press Plot again'
+    : 'type the studio plot password into "Plot password" under Output (the same one the visitor panel asks for), then press Plot again', 'note');
+}
+
 async function startPlot(o) {
   if (!$('pParked').checked) {
     log('tick "Carriage is parked in its home corner" first: no plotter here has home switches', 'err'); return;
@@ -783,7 +812,7 @@ async function startPlot(o) {
   } catch (e) { log('plot request failed: ' + e.message, 'err'); return; }
   if (!r.ok || !j.ok) {
     log(`${o.id} refused: ${j.message || r.status}`, 'err');
-    if (j.need_password) log('piplot wants the plot password (requests over HTTPS count as visitors)', 'note');
+    if (j.need_password) askForPassword(/wrong/.test(j.message || ''));
     return;
   }
   Object.assign(plot, { entry: o, pts, mm, frac: 0 });
@@ -1037,6 +1066,7 @@ document.addEventListener('keydown', (e) => {
 
 if (!('serial' in navigator)) log('Web Serial not available in this browser: Simulate machine still works.', 'note');
 log('Etchatron control v' + PAGE_VERSION + ' ready. Connect the Uno (controller.ino) or Simulate machine.', 'note');
+setupPassword();
 pollPlotters();
 setInterval(pollPlotters, 5000);
 setInterval(renderOutputs, 1000);
