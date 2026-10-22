@@ -82,13 +82,23 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var
 .jog button { height: 44px; font-size: 18px; padding: 0; }
 label.f { display: grid; grid-template-columns: 1fr 90px; align-items: center; gap: 8px;
   margin-bottom: 6px; color: var(--label); }
-input[type=number], input[type=text], select { font: inherit; color: var(--text); background: #0f130e;
+.eas-wrap.paper { background: var(--panel-2); }
+input[type=number], input[type=text], input[type=password], select { font: inherit; color: var(--text); background: #0f130e;
   border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; width: 100%; }
 #log { height: 170px; overflow: auto; background: #070907; border: 1px solid var(--line);
   border-radius: 8px; padding: 6px 8px; font: 12px/1.35 ui-monospace, Consolas, monospace;
   white-space: pre-wrap; color: #e6ffd0; }
 #log .tx { color: #7fd7ff; } #log .err { color: var(--stop); } #log .note { color: var(--warn); }
 .hint { color: var(--warn); font-size: 13px; margin: 6px 0 0; }
+.opt { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; padding: 7px 10px;
+  border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; cursor: pointer; }
+.opt input { accent-color: var(--accent); width: 16px; height: 16px; }
+.opt b { font-weight: 700; }
+.opt .kit { color: var(--label); font-size: 13px; }
+.opt .why { color: var(--warn); font-size: 13px; }
+.opt.off { opacity: .5; cursor: not-allowed; }
+.opt.sel { border-color: var(--accent); }
+label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); font-weight: 600; margin: 4px 0; }
 </style>
 </head>
 <body>
@@ -123,11 +133,23 @@ input[type=number], input[type=text], select { font: inherit; color: var(--text)
   </section>
 
   <div class="right">
+    <!-- where the drawing goes -->
+    <section>
+      <h2>Output</h2>
+      <div id="outputs"></div>
+      <div id="plotOpts" hidden>
+        <label class="f">Plot length, attractor steps <input id="pSteps" type="number" value="5000" step="500" min="200" max="50000"></label>
+        <label class="f">Margin, mm <input id="pMargin" type="number" value="15" step="5" min="0"></label>
+        <label class="f">Plot password (piplot asks over HTTPS) <input id="pPass" type="password" autocomplete="off"></label>
+        <label class="chk"><input id="pParked" type="checkbox"> Carriage is parked in its home corner</label>
+      </div>
+    </section>
+
     <!-- Etch A Sketch view -->
     <section>
-      <h2>Etch A Sketch view <span style="text-transform:none;letter-spacing:0;color:var(--text);font-weight:400">
+      <h2><span id="viewTitle">Etch A Sketch view</span> <span id="viewSub" style="text-transform:none;letter-spacing:0;color:var(--text);font-weight:400">
         (knob degrees, dashed box = limits)</span></h2>
-      <div class="eas-wrap"><canvas id="eas" width="800" height="600"></canvas></div>
+      <div class="eas-wrap" id="viewWrap"><canvas id="eas" width="800" height="600"></canvas></div>
       <div class="row" style="margin-top:10px">
         <button id="btnShake">Shake (clear view)</button>
       </div>
@@ -189,7 +211,7 @@ input[type=number], input[type=text], select { font: inherit; color: var(--text)
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.2.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding
+const PAGE_VERSION = '0.3.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters)
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -568,6 +590,7 @@ function toSteps(p) {
 }
 
 function stylusPoint() {
+  if (play.mode === 'plot') return plotStylus();
   if (!machine || !draw.movePts.length) return null;
   // move numbers are the firmware's running count; base = count at Draw
   const n = machine.cur.n - draw.base, d = machine.done - draw.base;
@@ -605,6 +628,7 @@ function feedVoiceFromStylus() {
 // ------------------------------------------------------------- Etch A Sketch view
 const eas = document.getElementById('eas'), ex = eas.getContext('2d');
 function drawEas() {
+  if (play.mode === 'plot' || outputs.selected !== 'eas') { drawPaper(); return; }
   const s = settings();
   const ew = eas.width, eh = eas.height;
   const span = Math.max(s.limit * 1.15, 200);              // knob degrees across half the height
@@ -645,6 +669,192 @@ function recordStylus() {
   if (!l || Math.hypot(p[0] - l[0], p[1] - l[1]) > 0.5) draw.easPath.push(p);
 }
 
+// ----------------------------------------------------------------- outputs
+// Where Draw goes: the Uno on this laptop, or any plotter a piplot server
+// reports. piplot lists every configured machine with `attached` (plugged
+// in) and `busy` (drawing), so the list can grey out the ones that are not
+// usable right now and say why. The HTTPS addresses are the Tailscale ones:
+// this page is HTTPS, and a browser will not let it call plain http.
+const PLOTTER_HOSTS = [
+  { name: 'plotterpi', base: 'https://plotterpi.tail405153.ts.net' },
+  { name: 'polarpi', base: 'https://polarpi.tail405153.ts.net' },
+];
+const outputs = { selected: 'eas', plotters: [], sig: '' };
+
+async function pollHost(h) {
+  try {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 4000);
+    const r = await fetch(h.base + '/api/boards', { signal: ctl.signal, cache: 'no-store' });
+    clearTimeout(t);
+    const j = await r.json();
+    return j.boards.map((b) => ({
+      id: `${h.name}/${b.label}`, host: h, label: b.label, driver: b.driver, travel: b.travel,
+      ok: b.attached && !b.busy, why: !b.attached ? 'not plugged in' : b.busy ? 'busy drawing' : '' }));
+  } catch (e) {
+    return [{ id: h.name, host: h, label: null, ok: false,
+      why: `can't reach ${h.name} (offline, or its piplot is older than 0.11.3)` }];
+  }
+}
+async function pollPlotters() {
+  outputs.plotters = (await Promise.all(PLOTTER_HOSTS.map(pollHost))).flat();
+  renderOutputs();
+}
+
+function renderOutputs() {
+  const easOk = !!(machine && machine.ready);
+  const rows = [{ id: 'eas', name: 'Etch A Sketch', kit: machine instanceof SimMachine ? 'simulated Uno' : 'Uno on this laptop',
+    ok: easOk, why: easOk ? '' : 'not connected: Connect Uno or Simulate machine' }]
+    .concat(outputs.plotters.map((p) => ({ id: p.id, name: p.label ? p.id : p.host.name,
+      kit: p.label ? `${p.driver}, ${p.travel[0]} x ${p.travel[1]} mm` : 'piplot', ok: p.ok, why: p.why })));
+  const sig = JSON.stringify([rows, outputs.selected]);
+  if (sig !== outputs.sig) {
+    outputs.sig = sig;
+    const el = $('outputs'); el.textContent = '';
+    for (const r of rows) {
+      const l = document.createElement('label');
+      l.className = 'opt' + (r.ok ? '' : ' off') + (r.id === outputs.selected ? ' sel' : '');
+      const i = document.createElement('input'); i.type = 'radio'; i.name = 'out'; i.value = r.id;
+      i.disabled = !r.ok; i.checked = r.id === outputs.selected;
+      i.onchange = () => {
+        if (play.mode === 'draw' || play.mode === 'plot') {
+          log('stop the current drawing before changing output', 'note'); outputs.sig = ''; renderOutputs(); return;
+        }
+        outputs.selected = r.id; outputs.sig = ''; renderOutputs();
+      };
+      const n = document.createElement('b'); n.textContent = r.name;
+      const k = document.createElement('span'); k.className = 'kit'; k.textContent = r.kit;
+      l.append(i, n, k);
+      if (r.why) { const w = document.createElement('span'); w.className = 'why'; w.textContent = r.why; l.append(w); }
+      el.append(l);
+    }
+  }
+  const isEas = outputs.selected === 'eas';
+  $('plotOpts').hidden = isEas;
+  $('viewTitle').textContent = isEas ? 'Etch A Sketch view' : 'Paper view';
+  $('viewSub').textContent = isEas ? '(knob degrees, dashed box = limits)' : '(the sheet at the plotter\'s size, red dot = home corner)';
+  $('viewWrap').classList.toggle('paper', !isEas);
+  $('btnDraw').textContent = isEas ? 'Draw on Etch A Sketch' : `Plot on ${outputs.selected.split('/').pop()}`;
+}
+
+// --------------------------------------------------------- plotting (piplot)
+// A plotter gets the whole drawing in one go: piplot checks it against the
+// machine's envelope, then draws it. The sound and trail then follow the pen
+// from piplot's progress (segments done of total).
+const plot = { entry: null, pts: [], mm: [], frac: 0, timer: null };
+
+function fitToPaper(pts, travel, margin, rotate) {
+  // u right, v up, in attractor units; same rotation as the Etch A Sketch
+  const uv = pts.map((p) => rotate ? [p[2], -p[0]] : [p[0], p[2]]);
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (const [u, v] of uv) { u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
+  const [W, H] = travel, m = Math.max(0, margin);
+  const k = Math.min((W - 2 * m) / (u1 - u0), (H - 2 * m) / (v1 - v0));
+  const ox = (W - (u1 - u0) * k) / 2, oy = (H - (v1 - v0) * k) / 2;
+  const r2 = (v) => Math.round(v * 100) / 100;
+  // paper mm, origin top left, y down, like the curve studio
+  return uv.map(([u, v]) => [r2(ox + (u - u0) * k), r2(oy + (v1 - v) * k)]);
+}
+
+function plotHeaders() {
+  const h = { 'Content-Type': 'application/json' }, pw = $('pPass').value;
+  if (pw) h['X-Plot-Password'] = pw;
+  return h;
+}
+
+async function startPlot(o) {
+  if (!$('pParked').checked) {
+    log('tick "Carriage is parked in its home corner" first: no plotter here has home switches', 'err'); return;
+  }
+  if (play.mode !== 'stopped') stopAll();
+  await ensureAudio();
+  resetPlayhead();
+  play.gen = newGen();
+  const n = Math.max(200, Math.min(50000, Math.round(+$('pSteps').value) || 5000));
+  const pts = [];
+  for (let i = 0; i < n; i++) pts.push(play.gen.step());
+  draw.rotate = $('cRotate').checked;
+  const mm = fitToPaper(pts, o.travel, +$('pMargin').value, draw.rotate);
+  log(`sending ${n} points to ${o.id}`, 'note');
+  let r, j;
+  try {
+    r = await fetch(o.host.base + '/api/plot', { method: 'POST', headers: plotHeaders(),
+      body: JSON.stringify({ points: mm, port: o.label, origin_confirmed: true }) });
+    j = await r.json();
+  } catch (e) { log('plot request failed: ' + e.message, 'err'); return; }
+  if (!r.ok || !j.ok) {
+    log(`${o.id} refused: ${j.message || r.status}`, 'err');
+    if (j.need_password) log('piplot wants the plot password (requests over HTTPS count as visitors)', 'note');
+    return;
+  }
+  Object.assign(plot, { entry: o, pts, mm, frac: 0 });
+  draw.lastPushed = null;
+  play.mode = 'plot'; play.paused = false;
+  $('pParked').checked = false;   // confirm again before the next plot, like piplot's own pages
+  modeButtons();
+  log(`${o.id}: ${j.message || 'plotting'}`, 'note');
+  clearInterval(plot.timer);
+  plot.timer = setInterval(pollPlot, 400);
+}
+
+async function pollPlot() {
+  const o = plot.entry;
+  if (!o || play.mode !== 'plot') { clearInterval(plot.timer); return; }
+  try {
+    const j = await (await fetch(`${o.host.base}/api/status?port=${encodeURIComponent(o.label)}`, { cache: 'no-store' })).json();
+    if (j.total) plot.frac = j.done / j.total;
+    if (!j.busy) {
+      clearInterval(plot.timer);
+      log(`${o.id}: ${j.state}${j.message ? ', ' + j.message : ''}`, j.state === 'error' ? 'err' : 'note');
+      play.mode = 'stopped';
+      if (audio.node) audio.node.port.postMessage({ type: 'reset' });
+      modeButtons();
+      pollPlotters();
+    }
+  } catch (e) { /* a missed poll is fine, the next one catches up */ }
+}
+
+async function stopPlot() {
+  const o = plot.entry;
+  clearInterval(plot.timer);
+  if (!o) return;
+  try {
+    const r = await fetch(o.host.base + '/api/stop', { method: 'POST', headers: plotHeaders(), body: JSON.stringify({ port: o.label }) });
+    const j = await r.json();
+    log(`${o.id} stop: ${j.message || r.status}`, r.ok ? 'note' : 'err');
+  } catch (e) { log('stop request failed: ' + e.message + ' (use the plotter panel)', 'err'); }
+}
+
+function plotStylus() {
+  const n = plot.pts.length;
+  if (!n) return null;
+  const f = Math.max(0, Math.min(1, plot.frac)) * (n - 1), i = Math.floor(f), t = f - i;
+  const a = plot.pts[i], b = plot.pts[Math.min(n - 1, i + 1)];
+  return a.map((v, j) => v + (b[j] - v) * t);
+}
+
+// paper view: the sheet at the plotter's size, the drawing, how far the pen is
+function drawPaper() {
+  const ew = eas.width, eh = eas.height;
+  ex.fillStyle = '#3a3f39'; ex.fillRect(0, 0, ew, eh);
+  const o = play.mode === 'plot' ? plot.entry : outputs.plotters.find((p) => p.id === outputs.selected);
+  if (!o || !o.travel) return;
+  const [W, H] = o.travel, k = Math.min((ew - 40) / W, (eh - 40) / H);
+  const x0 = (ew - W * k) / 2, y0 = (eh - H * k) / 2;
+  ex.fillStyle = '#fbfaf5'; ex.fillRect(x0, y0, W * k, H * k);
+  ex.fillStyle = '#c8102e'; ex.beginPath(); ex.arc(x0, y0, 5, 0, 7); ex.fill();   // home corner
+  if (play.mode !== 'plot' || !plot.mm.length) return;
+  const P = ([x, y]) => [x0 + x * k, y0 + y * k];
+  const upto = Math.floor(plot.frac * (plot.mm.length - 1));
+  ex.lineJoin = 'round';
+  ex.strokeStyle = 'rgba(0,110,220,0.45)'; ex.lineWidth = 1; ex.beginPath();
+  plot.mm.forEach((q, i) => { const [a, b] = P(q); i ? ex.lineTo(a, b) : ex.moveTo(a, b); }); ex.stroke();
+  ex.strokeStyle = '#1b1b1f'; ex.lineWidth = 1.4; ex.beginPath();
+  for (let i = 0; i <= upto; i++) { const [a, b] = P(plot.mm[i]); i ? ex.lineTo(a, b) : ex.moveTo(a, b); }
+  ex.stroke();
+  const [a, b] = P(plot.mm[upto]);
+  ex.fillStyle = '#c8102e'; ex.beginPath(); ex.arc(a, b, 5, 0, 7); ex.fill();
+}
+
 // --------------------------------------------------------------- main loop
 function frame() {
   if (play.mode === 'screen' && !play.paused) {
@@ -654,6 +864,8 @@ function frame() {
     pushPoints(pts);
   } else if (play.mode === 'draw') {
     feedMachine();
+    feedVoiceFromStylus();
+  } else if (play.mode === 'plot') {
     feedVoiceFromStylus();
   }
   drawTrail();
@@ -728,6 +940,7 @@ async function startDraw() {
 
 function stopAll() {
   if (play.mode === 'draw' && machine) machine.cmd('!');
+  if (play.mode === 'plot') stopPlot();
   play.mode = 'stopped'; play.paused = false;
   if (audio.node) audio.node.port.postMessage({ type: 'reset' });
   modeButtons();
@@ -735,11 +948,12 @@ function stopAll() {
 
 function modeButtons() {
   $('btnScreen').classList.toggle('active', play.mode === 'screen');
-  $('btnDraw').classList.toggle('active', play.mode === 'draw');
-  $('btnPause').disabled = play.mode === 'stopped';
+  $('btnDraw').classList.toggle('active', play.mode === 'draw' || play.mode === 'plot');
+  $('btnPause').disabled = play.mode === 'stopped' || play.mode === 'plot';   // piplot has no pause
   $('btnPause').textContent = play.paused ? 'Resume' : 'Pause';
   $('sMode').textContent = play.mode === 'stopped' ? 'stopped'
-    : (play.mode === 'screen' ? 'screen, real time' : 'drawing, stylus pace') + (play.paused ? ' (paused)' : '');
+    : (play.mode === 'screen' ? 'screen, real time'
+      : play.mode === 'plot' ? `plotting on ${plot.entry.id}, pen pace` : 'drawing, stylus pace') + (play.paused ? ' (paused)' : '');
 }
 
 function updateStats() {
@@ -786,7 +1000,12 @@ $('btnSim').onclick = () => {
 };
 $('btnStop').onclick = () => { stopAll(); if (machine) machine.cmd('!'); };
 $('btnScreen').onclick = startScreen;
-$('btnDraw').onclick = startDraw;
+$('btnDraw').onclick = () => {
+  if (outputs.selected === 'eas') return startDraw();
+  const o = outputs.plotters.find((p) => p.id === outputs.selected);
+  if (!o || !o.ok) { log('that output is not available right now', 'err'); return; }
+  startPlot(o);
+};
 $('btnPause').onclick = () => { play.paused = !play.paused; modeButtons(); };
 $('btnRestart').onclick = () => { if (play.mode === 'screen') { resetPlayhead(); play.gen = newGen(); } };
 $('btnSound').onclick = () => {
@@ -818,6 +1037,9 @@ document.addEventListener('keydown', (e) => {
 
 if (!('serial' in navigator)) log('Web Serial not available in this browser: Simulate machine still works.', 'note');
 log('Etchatron control v' + PAGE_VERSION + ' ready. Connect the Uno (controller.ino) or Simulate machine.', 'note');
+pollPlotters();
+setInterval(pollPlotters, 5000);
+setInterval(renderOutputs, 1000);
 requestAnimationFrame(frame);
 </script>
 </body>
