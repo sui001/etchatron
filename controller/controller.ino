@@ -10,6 +10,11 @@
 //   Y  STEP D3  DIR D6   vertical knob (right)
 //   EN D8, active LOW. Motors boot OFF, so the knobs turn by hand for
 //   centring the stylus; the page turns them on.
+//   UART: both drivers on one PDN_UART bus. A0 = RX (straight to the bus),
+//   A1 = TX (through 1k to the bus). Addresses come from the MS jumpers:
+//   X has M0 + M1 = address 3, Y has M0 only = address 1. M2 off on both,
+//   since the M2 slot is PDN_UART and a jumper there ties it to 5 V.
+//   Current stays on the Vref pots (I_scale_analog left at 1).
 // 20T motor pulley -> 60T push-over knob = 3:1, 26.667 steps per knob degree.
 //
 // Protocol, 115200, one command per line, every line answered "ok" or "err":
@@ -19,9 +24,19 @@
 //   E 0|1        motors off / on
 //   B bx by n    slack X, Y in steps, blend n (0 = take up all at once)
 //   F sps        dominant-axis speed, steps per second
+//   N 0..4       noise, only when idle:
+//                  0 quiet  StealthChop, 1/16 smoothed to 1/256 (the old sound)
+//                  1 hiss   SpreadCycle, 1/16 smoothed
+//                  2 grit   SpreadCycle, true 1/16, no smoothing
+//                  3 sing   SpreadCycle, half step
+//                  4 full   SpreadCycle, full step
+//                Answers "noise n X ok|- Y ok|-" then ok/err. Moves stay in
+//                1/16 steps whatever the level, so the page never knows; at
+//                half and full step the stylus lands on the nearest real
+//                step. Drivers need motor power to answer, so E 1 resends it.
 // Realtime, no newline needed, work mid-move:
 //   !            stop: drop the queue and the current move -> "aborted <n>"
-//   ?            status -> "S x y queued done motors bx by blend sps"
+//   ?            status -> "S x y queued done motors bx by blend sps noise"
 // Reports:
 //   D n          n moves finished in total
 //   P n pm x y   moving: move n, pm per mille done, stylus at (x, y) steps
@@ -29,9 +44,14 @@
 // Flow control: the queue holds QN moves. The host keeps (moves sent -
 // moves done) at or below QN - 2, using the D reports.
 
-#define VERSION "0.1.0"
+#define VERSION "0.2.0"
+#define NOISE_BOOT 3          // level set at boot and on every E 1
+
+#include <SoftwareSerial.h>
 
 const int X_STEP = 2, Y_STEP = 3, X_DIR = 5, Y_DIR = 6, EN = 8;
+const int TMC_RX = A0, TMC_TX = A1;
+const uint8_t X_ADDR = 3, Y_ADDR = 1;
 const float STEPS_PER_DEG = 200.0 * 16 * 60 / 20 / 360.0;   // 26.667
 
 #define QN 16
@@ -55,6 +75,23 @@ bool motors = false;
 bool abortReq = false;
 unsigned long lastReport = 0;
 
+// Noise. div = 1/16 steps per real driver step; only applied to an axis
+// whose driver confirmed the change, so a missing wire means the old
+// standalone behaviour, not a machine moving at 1/16 the distance.
+struct Level { bool spread, intpol; uint8_t mres, div; };
+const Level LEVELS[5] = {
+  { false, true,  4, 1 },   // quiet
+  { true,  true,  4, 1 },   // hiss
+  { true,  false, 4, 1 },   // grit
+  { true,  false, 7, 8 },   // sing, half step
+  { true,  false, 8, 16 },  // full step
+};
+int noise = -1;               // -1 = never confirmed
+uint8_t divX = 1, divY = 1, subX = 0, subY = 0;
+bool fwdX = true, fwdY = true;
+bool moving = false;
+SoftwareSerial tmc(TMC_RX, TMC_TX);
+
 char line[48];
 uint8_t len = 0;
 
@@ -65,6 +102,7 @@ void setMotors(bool on) {
 
 void setDir(int pin, bool positive) {
   digitalWrite(pin, positive ? LOW : HIGH);   // LOW = clockwise = positive, as GRBL $3=0
+  if (pin == X_DIR) fwdX = positive; else fwdY = positive;
 }
 
 void pulse(int pin) {
@@ -73,12 +111,89 @@ void pulse(int pin) {
   digitalWrite(pin, LOW);
 }
 
+// One 1/16 step. At a coarser driver step this only pulses when the 1/16
+// count crosses a real step, rounding down both ways, so it adds no slack.
+void step(int pin) {
+  bool isX = pin == X_STEP;
+  uint8_t d = isX ? divX : divY;
+  if (d == 1) { pulse(pin); return; }
+  uint8_t &sub = isX ? subX : subY;
+  if (isX ? fwdX : fwdY) { if (++sub >= d) { sub = 0; pulse(pin); } }
+  else if (sub == 0) { sub = d - 1; pulse(pin); }
+  else sub--;
+}
+
+// ---- TMC2209 single-wire UART (datasheet section 4)
+uint8_t crc8(const uint8_t *b, uint8_t n) {
+  uint8_t crc = 0;
+  for (uint8_t i = 0; i < n; i++) {
+    uint8_t c = b[i];
+    for (uint8_t j = 0; j < 8; j++) {
+      crc = ((crc >> 7) ^ (c & 1)) ? (crc << 1) ^ 0x07 : crc << 1;
+      c >>= 1;
+    }
+  }
+  return crc;
+}
+
+void tmcWrite(uint8_t addr, uint8_t reg, uint32_t v) {
+  uint8_t b[8] = { 0x05, addr, (uint8_t)(reg | 0x80),
+                   (uint8_t)(v >> 24), (uint8_t)(v >> 16), (uint8_t)(v >> 8), (uint8_t)v, 0 };
+  b[7] = crc8(b, 7);
+  tmc.write(b, 8);
+  delay(2);
+}
+
+// Our own bytes echo back on the shared wire, so look for the reply's
+// 05 FF reg header rather than trusting byte positions.
+bool tmcRead(uint8_t addr, uint8_t reg, uint32_t &v) {
+  uint8_t req[4] = { 0x05, addr, reg, 0 };
+  req[3] = crc8(req, 3);
+  while (tmc.available()) tmc.read();
+  tmc.write(req, 4);
+  uint8_t b[16]; uint8_t n = 0;
+  unsigned long t0 = millis();
+  while (millis() - t0 < 30 && n < sizeof(b)) if (tmc.available()) b[n++] = tmc.read();
+  for (uint8_t i = 0; i + 8 <= n; i++) {
+    if (b[i] == 0x05 && b[i + 1] == 0xFF && b[i + 2] == reg && crc8(b + i, 7) == b[i + 7]) {
+      v = ((uint32_t)b[i + 3] << 24) | ((uint32_t)b[i + 4] << 16) | ((uint32_t)b[i + 5] << 8) | b[i + 6];
+      return true;
+    }
+  }
+  return false;
+}
+
+// GCONF: I_scale_analog (pot keeps the current), pdn_disable (UART owns
+// the PDN pin), mstep_reg_select (MRES not the jumpers), multistep_filt.
+// CHOPCONF: TOFF 4, HSTRT 1, HEND 2, TBL 2 (Marlin's 24 V chopper) + MRES, intpol.
+bool tmcLevel(uint8_t addr, const Level &L) {
+  uint32_t gconf = 0x1C1UL | (L.spread ? 0x04UL : 0);
+  uint32_t chop = 0x04UL | (5UL << 7) | (2UL << 15) | ((uint32_t)L.mres << 24) | (L.intpol ? (1UL << 28) : 0);
+  tmcWrite(addr, 0x00, gconf);
+  tmcWrite(addr, 0x6C, chop);
+  uint32_t g, c;
+  return tmcRead(addr, 0x00, g) && tmcRead(addr, 0x6C, c) && (g & 0x1FF) == gconf && c == chop;
+}
+
+bool setNoise(int n) {
+  const Level &L = LEVELS[n];
+  tmc.listen();
+  bool okX = tmcLevel(X_ADDR, L), okY = tmcLevel(Y_ADDR, L);
+  if (okX) { divX = L.div; subX = 0; }
+  if (okY) { divY = L.div; subY = 0; }
+  if (okX && okY) noise = n;
+  Serial.print("noise "); Serial.print(n);
+  Serial.print(okX ? " X ok" : " X -"); Serial.println(okY ? " Y ok" : " Y -");
+  return okX && okY;
+}
+
 void status() {
   Serial.print("S "); Serial.print(posX); Serial.print(' '); Serial.print(posY);
   Serial.print(' '); Serial.print(qCount); Serial.print(' '); Serial.print(done);
   Serial.print(' '); Serial.print(motors ? 1 : 0);
   Serial.print(' '); Serial.print(blX); Serial.print(' '); Serial.print(blY);
-  Serial.print(' '); Serial.print(blend); Serial.print(' '); Serial.println(sps);
+  Serial.print(' '); Serial.print(blend); Serial.print(' '); Serial.print(sps);
+  Serial.print(' '); Serial.println(noise);
 }
 
 // Pull a number off the line; false if there isn't one.
@@ -118,7 +233,11 @@ void handleLine(char *s) {
       Serial.println("ok");
       break;
     case 'E':
-      if (num(p, a)) { setMotors(a != 0); Serial.println("ok"); } else Serial.println("err E 0|1");
+      if (num(p, a)) {
+        setMotors(a != 0);
+        if (a && !moving && !qCount) setNoise(noise >= 0 ? noise : NOISE_BOOT);
+        Serial.println("ok");
+      } else Serial.println("err E 0|1");
       break;
     case 'B':
       if (num(p, a) && num(p, b) && num(p, n) && a >= 0 && b >= 0 && n >= 0) {
@@ -128,6 +247,11 @@ void handleLine(char *s) {
     case 'F':
       if (num(p, a) && a >= 100 && a <= 8000) { sps = a; stepUs = 1000000UL / sps; Serial.println("ok"); }
       else Serial.println("err F 100..8000");
+      break;
+    case 'N':
+      if (!num(p, a) || a < 0 || a > 4) { Serial.println("err N 0..4"); break; }
+      if (moving || qCount) { Serial.println("err busy"); break; }
+      Serial.println(setNoise(a) ? "ok" : "err noise: a driver did not answer, check the UART wire and motor power");
       break;
     default:
       Serial.println("err ?");
@@ -153,7 +277,7 @@ void serviceSerial() {
 void takeUp(int stepPin, long n) {
   for (long i = 0; i < n && !abortReq; i++) {
     unsigned long t0 = micros();
-    pulse(stepPin);
+    step(stepPin);
     serviceSerial();
     while (micros() - t0 < stepUs) {}
   }
@@ -170,7 +294,7 @@ void reversal(int stepPin, long bl, long &pend) {
 void payOff(int stepPin, long &pend) {
   for (int k = 0; k < blend && pend > 0; k++) {
     delayMicroseconds(150);
-    pulse(stepPin);
+    step(stepPin);
     pend--;
   }
 }
@@ -196,8 +320,8 @@ void runMove(long tx, long ty) {
   for (long i = 0; i < n; i++) {
     unsigned long t0 = micros();
     ex += dx; ey += dy;
-    if (ex >= n) { ex -= n; pulse(X_STEP); posX += sx; payOff(X_STEP, pendX); }
-    if (ey >= n) { ey -= n; pulse(Y_STEP); posY += sy; payOff(Y_STEP, pendY); }
+    if (ex >= n) { ex -= n; step(X_STEP); posX += sx; payOff(X_STEP, pendX); }
+    if (ey >= n) { ey -= n; step(Y_STEP); posY += sy; payOff(Y_STEP, pendY); }
     serviceSerial();
     if (abortReq) return;
     if (millis() - lastReport >= 50) {
@@ -218,6 +342,8 @@ void setup() {
   pinMode(X_DIR, OUTPUT);  pinMode(Y_DIR, OUTPUT);
   pinMode(EN, OUTPUT);
   setMotors(false);
+  tmc.begin(19200);
+  setNoise(NOISE_BOOT);   // only answers if motor power is already on
   Serial.println("ready");
 }
 
@@ -235,7 +361,9 @@ void loop() {
     Move m = q[qHead];
     qHead = (qHead + 1) % QN;
     qCount--;
+    moving = true;
     runMove(m.x, m.y);
+    moving = false;
     if (abortReq) return;          // loop() reports it
     done++;
     report(done, 1000);
