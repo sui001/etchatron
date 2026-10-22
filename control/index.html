@@ -222,7 +222,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.6.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first
+const PAGE_VERSION = '0.7.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first; 0.7.0 a closed tab no longer strands a plotter
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -751,6 +751,24 @@ function renderOutputs() {
       const k = document.createElement('span'); k.className = 'kit'; k.textContent = r.kit;
       l.append(i, n, k);
       if (r.why) { const w = document.createElement('span'); w.className = 'why'; w.textContent = r.why; l.append(w); }
+      const pl = outputs.plotters.find((q) => q.id === r.id);
+      if (pl && pl.why === 'busy drawing' && !(play.mode === 'plot' && plot.entry && plot.entry.id === r.id)) {
+        // Not ours: an earlier tab that was closed, or someone else's plot.
+        const b = document.createElement('button'); b.textContent = 'Stop it';
+        b.style.cssText = 'padding:2px 10px;margin-left:auto;background:var(--stop);border-color:var(--stop);color:#fff';
+        b.onclick = async (ev) => {
+          ev.preventDefault(); ev.stopPropagation();
+          if (!confirm(`Stop whatever ${pl.id} is drawing? It may be an abandoned page, or someone else's plot.`)) return;
+          try {
+            const rr = await fetch(pl.host.base + '/api/stop', { method: 'POST', headers: plotHeaders(), body: JSON.stringify({ port: pl.label }) });
+            const jj = await rr.json();
+            log(`${pl.id} stop: ${jj.message || rr.status}`, rr.ok ? 'note' : 'err');
+            if (jj.need_password) askForPassword(/wrong/.test(jj.message || ''));
+          } catch (e) { log('stop request failed: ' + e.message, 'err'); }
+          setTimeout(pollPlotters, 1500);
+        };
+        l.append(b);
+      }
       el.append(l);
     }
   }
@@ -885,7 +903,10 @@ const labelSegs = (strokes) => strokes.reduce((n, st) => n + Math.max(0, st.leng
 // lead ahead of the pen so it never waits and lifts. The AxiDraws cannot do
 // sessions in piplot, so they keep the fixed-length plot above.
 const SESSION_DRIVERS = ['grbl', 'polargraph', 'etchatron'];
-const sess = { id: '', sent: 0, piece: 80, lead: 320, busy: false, toMm: null };
+const sess = { id: '', sent: 0, piece: 80, lead: 320, busy: false, toMm: null, lastContact: 0 };
+// Long enough to ride out a hidden tab's throttled timers, short enough that
+// a closed tab frees the machine before anyone wonders why it is greyed out.
+const SESSION_IDLE_CLOSE_S = 120;
 
 // The sheet is sized from a long silent run of the same attractor from the
 // same start, since a drawing that never ends cannot be fitted afterwards.
@@ -929,7 +950,9 @@ async function startSession(o) {
   draw.rotate = $('cRotate').checked;
   sess.toMm = paperMapper(boundsAhead(play.gen, draw.rotate), o.travel, +$('pMargin').value, draw.rotate);
   let r, j;
-  try { [r, j] = await sessionCall(o, { action: 'start', origin_confirmed: true }); }
+  // idle_close_s: piplot (0.14.0+) ends the session by itself, pen up and
+  // home, if this page stops getting in touch, e.g. the tab was closed.
+  try { [r, j] = await sessionCall(o, { action: 'start', origin_confirmed: true, idle_close_s: SESSION_IDLE_CLOSE_S }); }
   catch (e) { log('session request failed: ' + e.message, 'err'); return; }
   if (!r.ok || !j.ok) {
     log(`${o.id} refused: ${j.message || r.status}`, 'err');
@@ -948,7 +971,7 @@ async function startSession(o) {
   }
   Object.assign(plot, { entry: o, pts: [p0], mm: [sess.toMm(p0)], frac: 0, session: true,
     label: lab.strokes, labelSegs: labelSegs(lab.strokes) });
-  sess.id = 'attractor-' + Date.now(); sess.sent = 0; sess.busy = false;
+  sess.id = 'attractor-' + Date.now(); sess.sent = 0; sess.busy = false; sess.lastContact = Date.now();
   draw.lastPushed = null;
   play.mode = 'plot'; play.paused = false;
   $('pParked').checked = false;
@@ -984,6 +1007,11 @@ async function sessionTick() {
       for (const p of fresh) plot.pts.push(p);
       for (const q of mm.slice(1)) plot.mm.push(q);
       sess.sent += sess.piece;
+      sess.lastContact = Date.now();
+    } else if (Date.now() - sess.lastContact > 20000) {
+      // paused, or the pen is far behind: say we are still here
+      await sessionCall(o, { action: 'ping' });
+      sess.lastContact = Date.now();
     }
   } catch (e) { /* a missed tick is fine, the next one catches up */ }
   finally { sess.busy = false; }
@@ -1282,6 +1310,21 @@ document.addEventListener('keydown', (e) => {
 
 if (!('serial' in navigator)) log('Web Serial not available in this browser: Simulate machine still works.', 'note');
 log('Etchatron control v' + PAGE_VERSION + ' ready. Connect the Uno (controller.ino) or Simulate machine.', 'note');
+// Closing the tab mid-drawing used to leave piplot holding the machine with
+// nothing feeding it (22 Oct). Warn first; if it closes anyway, end the
+// session on the way out (keepalive lets the request outlive the page), and
+// piplot's idle close catches whatever that misses.
+addEventListener('beforeunload', (e) => {
+  if (play.mode === 'plot' || play.mode === 'draw') { e.preventDefault(); e.returnValue = ''; }
+});
+addEventListener('pagehide', () => {
+  if (play.mode !== 'plot' || !plot.session || !plot.entry) return;
+  try {
+    fetch(plot.entry.host.base + '/api/session', { method: 'POST', keepalive: true, headers: plotHeaders(),
+      body: JSON.stringify({ action: 'end', port: plot.entry.label }) });
+  } catch (e) { /* best effort; idle close is the backstop */ }
+});
+
 setupPassword();
 pollPlotters();
 setInterval(pollPlotters, 5000);
