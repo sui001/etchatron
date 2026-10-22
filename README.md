@@ -6,7 +6,7 @@ history.
 
 | Path | What it is |
 |---|---|
-| `control/index.html` | Control page: Thomas's five attractors with sound and afterglow (port of `control/thomas/lorenz_av.py`), plus jog, zero, settings and an Etch A Sketch view. Screen mode plays in real time; Draw mode streams moves to the Uno and the sound follows the stylus. Chrome or Edge (Web Serial) |
+| `control/index.html` | Control page: Thomas's five attractors with sound and afterglow (port of `control/thomas/lorenz_av.py`). Outputs: any piplot machine, including this Etch A Sketch when its Uno is on plotterpi (piplot 0.12.0 `etchatron` driver), or the Uno on this laptop over Web Serial. Served by piplot at http://100.68.139.69:8080/etchatron.html; `control/deploy_to_plotterpi.sh` puts it there |
 | `controller/` | Uno firmware the control page talks to: queued absolute moves, blended slack take-up, position reports. Protocol in the file header |
 | `spiral/` | Slack (backlash) test spiral with ring ladders for amount and blend speed; where X 23 / Y 17, blend 3 came from |
 | `lorenz/` | Standalone Lorenz attractor sketch for an Uno + Protoneer CNC Shield V3 + TMC2209s (step/dir, replaces GRBL) |

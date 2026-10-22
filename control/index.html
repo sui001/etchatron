@@ -140,9 +140,9 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
       <div id="outputs"></div>
       <div id="plotOpts" hidden>
         <label class="f">Plot length, attractor steps <input id="pSteps" type="number" value="5000" step="500" min="200" max="50000"></label>
-        <label class="f">Margin, mm <input id="pMargin" type="number" value="15" step="5" min="0"></label>
+        <label class="f">Margin (mm; knob &deg; on the Etch A Sketch) <input id="pMargin" type="number" value="15" step="5" min="0"></label>
         <label class="f">Plot password <input id="pPass" type="password" autocomplete="off" placeholder="studio password"></label>
-        <label class="chk"><input id="pParked" type="checkbox"> Carriage is parked in its home corner</label>
+        <label class="chk"><input id="pParked" type="checkbox"><span id="parkedText"> Carriage is parked in its home corner</span></label>
       </div>
     </section>
 
@@ -212,7 +212,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.3.1';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt
+const PAGE_VERSION = '0.4.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -686,8 +686,12 @@ const PLOTTER_HOSTS = [
   { name: 'plotterpi', https: 'https://plotterpi.tail405153.ts.net', tailnet: 'http://100.68.139.69:8080' },
   { name: 'polarpi', https: 'https://polarpi.tail405153.ts.net', tailnet: 'http://100.80.99.46:8080' },
 ];
+//   served BY piplot (/etchatron.html on plotterpi, like the curve studio):
+//     its own origin, so plotterpi needs nothing special at all.
 const VIA_TAILNET = location.protocol === 'http:';
+const SERVED_BY_PIPLOT = location.pathname.endsWith('/etchatron.html');
 PLOTTER_HOSTS.forEach((h) => { h.base = VIA_TAILNET ? h.tailnet : h.https; });
+if (SERVED_BY_PIPLOT) PLOTTER_HOSTS[0].base = location.origin;
 const outputs = { selected: 'eas', plotters: [], sig: '' };
 
 async function pollHost(h) {
@@ -711,10 +715,13 @@ async function pollPlotters() {
 
 function renderOutputs() {
   const easOk = !!(machine && machine.ready);
+  const easWhy = easOk ? '' : ('serial' in navigator ? 'not connected: Connect Uno or Simulate machine'
+    : 'this copy cannot reach a USB port; Simulate machine still works');
   const rows = [{ id: 'eas', name: 'Etch A Sketch', kit: machine instanceof SimMachine ? 'simulated Uno' : 'Uno on this laptop',
-    ok: easOk, why: easOk ? '' : 'not connected: Connect Uno or Simulate machine' }]
+    ok: easOk, why: easWhy }]
     .concat(outputs.plotters.map((p) => ({ id: p.id, name: p.label ? p.id : p.host.name,
-      kit: p.label ? `${p.driver}, ${p.travel[0]} x ${p.travel[1]} mm` : 'piplot', ok: p.ok, why: p.why })));
+      kit: !p.label ? 'piplot' : p.driver === 'etchatron' ? `Etch A Sketch on the Pi, ±${p.travel[0] / 2} knob °`
+        : `${p.driver}, ${p.travel[0]} x ${p.travel[1]} mm`, ok: p.ok, why: p.why })));
   const sig = JSON.stringify([rows, outputs.selected]);
   if (sig !== outputs.sig) {
     outputs.sig = sig;
@@ -740,7 +747,11 @@ function renderOutputs() {
   const isEas = outputs.selected === 'eas';
   $('plotOpts').hidden = isEas;
   $('viewTitle').textContent = isEas ? 'Etch A Sketch view' : 'Paper view';
-  $('viewSub').textContent = isEas ? '(knob degrees, dashed box = limits)' : '(the sheet at the plotter\'s size, red dot = home corner)';
+  const sel = outputs.plotters.find((q) => q.id === outputs.selected);
+  const piEas = !!(sel && sel.driver === 'etchatron');
+  $('viewSub').textContent = isEas ? '(knob degrees, dashed box = limits)'
+    : piEas ? '(knob degrees, the stylus starts in the centre)' : '(the sheet at the plotter\'s size, red dot = home corner)';
+  $('parkedText').textContent = piEas ? ' Stylus is in the centre of the screen' : ' Carriage is parked in its home corner';
   $('viewWrap').classList.toggle('paper', !isEas);
   $('btnDraw').textContent = isEas ? 'Draw on Etch A Sketch' : `Plot on ${outputs.selected.split('/').pop()}`;
 }
@@ -792,7 +803,8 @@ function askForPassword(wrong) {
 
 async function startPlot(o) {
   if (!$('pParked').checked) {
-    log('tick "Carriage is parked in its home corner" first: no plotter here has home switches', 'err'); return;
+    log(o.driver === 'etchatron' ? 'tick "Stylus is in the centre of the screen" first: the Uno takes wherever it is as the centre'
+      : 'tick "Carriage is parked in its home corner" first: no plotter here has home switches', 'err'); return;
   }
   if (play.mode !== 'stopped') stopAll();
   await ensureAudio();
@@ -869,8 +881,15 @@ function drawPaper() {
   if (!o || !o.travel) return;
   const [W, H] = o.travel, k = Math.min((ew - 40) / W, (eh - 40) / H);
   const x0 = (ew - W * k) / 2, y0 = (eh - H * k) / 2;
-  ex.fillStyle = '#fbfaf5'; ex.fillRect(x0, y0, W * k, H * k);
-  ex.fillStyle = '#c8102e'; ex.beginPath(); ex.arc(x0, y0, 5, 0, 7); ex.fill();   // home corner
+  if (o.driver === 'etchatron') {
+    ex.fillStyle = '#c8102e'; ex.fillRect(0, 0, ew, eh);
+    ex.fillStyle = '#c9cdc8'; ex.fillRect(x0, y0, W * k, H * k);
+    ex.strokeStyle = '#a9aea8'; ex.beginPath(); ex.moveTo(ew / 2, y0); ex.lineTo(ew / 2, y0 + H * k);
+    ex.moveTo(x0, eh / 2); ex.lineTo(x0 + W * k, eh / 2); ex.stroke();   // the stylus starts where these cross
+  } else {
+    ex.fillStyle = '#fbfaf5'; ex.fillRect(x0, y0, W * k, H * k);
+    ex.fillStyle = '#c8102e'; ex.beginPath(); ex.arc(x0, y0, 5, 0, 7); ex.fill();   // home corner
+  }
   if (play.mode !== 'plot' || !plot.mm.length) return;
   const P = ([x, y]) => [x0 + x * k, y0 + y * k];
   const upto = Math.floor(plot.frac * (plot.mm.length - 1));
