@@ -142,6 +142,16 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
         <label class="f">Plot length, attractor steps (AxiDraw) <input id="pSteps" type="number" value="5000" step="500" min="200" max="50000"></label>
         <label class="f">Margin (mm; knob &deg; on the Etch A Sketch) <input id="pMargin" type="number" value="15" step="5" min="0"></label>
         <label class="f">Plot password <input id="pPass" type="password" autocomplete="off" placeholder="studio password"></label>
+        <div id="labelRow" class="row" style="margin:6px 0">
+          <span style="color:var(--label)">Label, drawn first:</span>
+          <label class="chk"><input id="lName" type="checkbox"> Attractor</label>
+          <label class="chk"><input id="lDate" type="checkbox"> Date</label>
+          <select id="lCorner" style="width:auto">
+            <option value="br">bottom right</option>
+            <option value="bl">bottom left</option>
+          </select>
+        </div>
+        <p class="hint" id="labelNote" hidden>The Etch A Sketch cannot lift its stylus, so it draws no label: the letters would all join up.</p>
         <label class="chk"><input id="pParked" type="checkbox"><span id="parkedText"> Carriage is parked in its home corner</span></label>
       </div>
     </section>
@@ -212,7 +222,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.5.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions)
+const PAGE_VERSION = '0.6.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -757,13 +767,15 @@ function renderOutputs() {
   $('btnDraw').textContent = isEas ? 'Draw on Etch A Sketch'
     : live ? `Draw on ${outputs.selected.split('/').pop()}` : `Plot on ${outputs.selected.split('/').pop()}`;
   $('pSteps').closest('label').hidden = isEas || live;   // only a fixed plot has a length
+  $('labelRow').hidden = piEas;                          // no stylus lift, no lettering
+  $('labelNote').hidden = !piEas;
 }
 
 // --------------------------------------------------------- plotting (piplot)
 // A plotter gets the whole drawing in one go: piplot checks it against the
 // machine's envelope, then draws it. The sound and trail then follow the pen
 // from piplot's progress (segments done of total).
-const plot = { entry: null, pts: [], mm: [], frac: 0, timer: null, session: false };
+const plot = { entry: null, pts: [], mm: [], frac: 0, timer: null, session: false, label: [], labelSegs: 0 };
 
 function fitToPaper(pts, travel, margin, rotate) {
   // u right, v up, in attractor units; same rotation as the Etch A Sketch
@@ -804,6 +816,67 @@ function askForPassword(wrong) {
     : 'type the studio plot password into "Plot password" under Output (the same one the visitor panel asks for), then press Plot again', 'note');
 }
 
+
+
+// ------------------------------------------------------------------- label
+// The date and/or the attractor's name, small in a bottom corner of the
+// margin, drawn by the pen before the attractor starts. Font and placement
+// are piplot's curve studio label (docs/index.html, 0.11.2), copied so the
+// two pages' labels match: single-stroke capitals on a 4 x 6 grid, y up from
+// the baseline, one string = one pen-down stroke, slashed zero.
+const _O = "1,0 0,1 0,5 1,6 3,6 4,5 4,1 3,0 1,0", _P = "0,0 0,6 3,6 4,5 4,4 3,3 0,3";
+const GLYPHS = {
+  A:["0,0 2,6 4,0","1,3 3,3"], B:["0,0 0,6 3,6 4,5 4,4 3,3 0,3","3,3 4,2 4,1 3,0 0,0"],
+  C:["4,5 3,6 1,6 0,5 0,1 1,0 3,0 4,1"], D:["0,0 0,6 2,6 4,4 4,2 2,0 0,0"],
+  E:["4,6 0,6 0,0 4,0","0,3 3,3"], F:["4,6 0,6 0,0","0,3 3,3"],
+  G:["4,5 3,6 1,6 0,5 0,1 1,0 3,0 4,1 4,3 2,3"], H:["0,0 0,6","4,0 4,6","0,3 4,3"],
+  I:["1,6 3,6","2,6 2,0","1,0 3,0"], J:["4,6 4,1 3,0 1,0 0,1"],
+  K:["0,0 0,6","4,6 0,2","1,3 4,0"], L:["0,6 0,0 4,0"], M:["0,0 0,6 2,3 4,6 4,0"],
+  N:["0,0 0,6 4,0 4,6"], O:[_O], P:[_P], Q:[_O,"2,2 4,0"], R:[_P,"2,3 4,0"],
+  S:["4,5 3,6 1,6 0,5 0,4 1,3 3,3 4,2 4,1 3,0 1,0 0,1"], T:["0,6 4,6","2,6 2,0"],
+  U:["0,6 0,1 1,0 3,0 4,1 4,6"], V:["0,6 2,0 4,6"], W:["0,6 1,0 2,4 3,0 4,6"],
+  X:["0,0 4,6","0,6 4,0"], Y:["0,6 2,3 4,6","2,3 2,0"], Z:["0,6 4,6 0,0 4,0"],
+  0:[_O,"4,5 0,1"], 1:["1,5 2,6 2,0","1,0 3,0"], 2:["0,5 1,6 3,6 4,5 4,4 0,0 4,0"],
+  3:["0,5 1,6 3,6 4,5 4,4 3,3 4,2 4,1 3,0 1,0 0,1","1,3 3,3"], 4:["3,0 3,6 0,2 4,2"],
+  5:["4,6 0,6 0,3 3,3 4,2 4,1 3,0 0,0"], 6:["4,5 3,6 1,6 0,5 0,1 1,0 3,0 4,1 4,2 3,3 0,3"],
+  7:["0,6 4,6 1,0"], 8:["1,3 0,4 0,5 1,6 3,6 4,5 4,4 3,3 1,3 0,2 0,1 1,0 3,0 4,1 4,2 3,3"],
+  9:["0,1 1,0 3,0 4,1 4,5 3,6 1,6 0,5 0,4 1,3 4,3"],
+  ".":["2,0 2,0.5"], ",":["2,0.5 1.5,-1"], ":":["2,1 2,1.5","2,4 2,4.5"],
+  "-":["1,3 3,3"], "=":["1,2 3,2","1,4 3,4"], "/":["0,0 4,6"], "+":["2,1 2,5","0,3 4,3"],
+  "(":["3,6 2,4.5 2,1.5 3,0"], ")":["1,6 2,4.5 2,1.5 1,0"],
+};
+const GLYPH = Object.fromEntries(Object.entries(GLYPHS).map(([k, ss]) =>
+  [k, ss.map((t) => t.split(' ').map((q) => q.split(',').map(Number)))]));
+
+// What the label says: nothing, or the attractor and/or today's date on one
+// line. Accents go (the font is plain capitals): Rössler is written ROSSLER.
+function labelText() {
+  const parts = [];
+  if ($('lName').checked) parts.push(ATTRACTORS[selected].name);
+  if ($('lDate').checked) {
+    const d = new Date();
+    parts.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+  return parts.join('  ').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+}
+
+// Strokes in paper mm, sat in the margin band of the chosen bottom corner,
+// and whether the line fits there without touching the drawing.
+function labelStrokes(pw, ph, m) {
+  const text = labelText();
+  if (!text) return { strokes: [], fits: true };
+  const cap = 2.2, u = cap / 6, adv = 6 * u;
+  const bw = text.length * adv - 2 * u, bh = cap;
+  const inset = Math.max(4, (m - bh) / 2);       // centred in the margin band
+  const x0 = $('lCorner').value === 'bl' ? Math.max(4, m) : pw - Math.max(4, m) - bw;
+  const base = ph - inset;                        // y grows down the page
+  const out = [];
+  [...text].forEach((ch, ci) => {
+    for (const st of GLYPH[ch] || []) out.push(st.map(([gx, gy]) => [x0 + ci * adv + gx * u, base - gy * u]));
+  });
+  return { strokes: out, fits: bh + 2 <= m && bw <= pw - 2 * m };
+}
+const labelSegs = (strokes) => strokes.reduce((n, st) => n + Math.max(0, st.length - 1), 0);
 
 // ---------------------------------------------------- live sessions (piplot)
 // Machines piplot can hold open and feed as a drawing grows. On these Draw
@@ -864,7 +937,17 @@ async function startSession(o) {
     return;
   }
   const p0 = play.gen.canon();
-  Object.assign(plot, { entry: o, pts: [p0], mm: [sess.toMm(p0)], frac: 0, session: true });
+  const lab = o.driver === 'etchatron' ? { strokes: [], fits: true } : labelStrokes(o.travel[0], o.travel[1], +$('pMargin').value);
+  if (!lab.fits) log('the label does not fit the margin band: widen the margin, or it may touch the drawing', 'note');
+  if (lab.strokes.length) {
+    // each stroke its own id, so the pen lifts between them; then the attractor
+    const pieces = lab.strokes.map((st, i) => ({ id: `label-${Date.now()}-${i}`, points: st.length > 1 ? st : [st[0], st[0]], end: true }));
+    const [r2, a2] = await sessionCall(o, { action: 'add', pieces });
+    if (!r2.ok || !a2.ok) log(`${o.id} would not take the label: ${a2.message || r2.status}`, 'err');
+    else log(`label first: ${labelText()}`, 'note');
+  }
+  Object.assign(plot, { entry: o, pts: [p0], mm: [sess.toMm(p0)], frac: 0, session: true,
+    label: lab.strokes, labelSegs: labelSegs(lab.strokes) });
   sess.id = 'attractor-' + Date.now(); sess.sent = 0; sess.busy = false;
   draw.lastPushed = null;
   play.mode = 'plot'; play.paused = false;
@@ -882,7 +965,7 @@ async function sessionTick() {
   sess.busy = true;
   try {
     const j = await (await fetch(`${o.host.base}/api/status?port=${encodeURIComponent(o.label)}`, { cache: 'no-store' })).json();
-    const done = j.done || 0;
+    const done = Math.max(0, (j.done || 0) - plot.labelSegs);   // the label goes first
     plot.frac = done / Math.max(1, plot.pts.length - 1);
     if (!j.busy && sess.sent > 0) {
       clearInterval(plot.timer);
@@ -920,11 +1003,15 @@ async function startPlot(o) {
   for (let i = 0; i < n; i++) pts.push(play.gen.step());
   draw.rotate = $('cRotate').checked;
   const mm = fitToPaper(pts, o.travel, +$('pMargin').value, draw.rotate);
+  const lab = labelStrokes(o.travel[0], o.travel[1], +$('pMargin').value);
+  if (!lab.fits) log('the label does not fit the margin band: widen the margin, or it may touch the drawing', 'note');
   log(`sending ${n} points to ${o.id}`, 'note');
   let r, j;
   try {
     r = await fetch(o.host.base + '/api/plot', { method: 'POST', headers: plotHeaders(),
-      body: JSON.stringify({ points: mm, port: o.label, origin_confirmed: true }) });
+      body: JSON.stringify(lab.strokes.length
+        ? { paths: [...lab.strokes.map((st) => st.length > 1 ? st : [st[0], st[0]]), mm], port: o.label, origin_confirmed: true }
+        : { points: mm, port: o.label, origin_confirmed: true }) });
     j = await r.json();
   } catch (e) { log('plot request failed: ' + e.message, 'err'); return; }
   if (!r.ok || !j.ok) {
@@ -932,7 +1019,7 @@ async function startPlot(o) {
     if (j.need_password) askForPassword(/wrong/.test(j.message || ''));
     return;
   }
-  Object.assign(plot, { entry: o, pts, mm, frac: 0, session: false });
+  Object.assign(plot, { entry: o, pts, mm, frac: 0, session: false, label: lab.strokes, labelSegs: labelSegs(lab.strokes) });
   draw.lastPushed = null;
   play.mode = 'plot'; play.paused = false;
   $('pParked').checked = false;   // confirm again before the next plot, like piplot's own pages
@@ -947,7 +1034,7 @@ async function pollPlot() {
   if (!o || play.mode !== 'plot') { clearInterval(plot.timer); return; }
   try {
     const j = await (await fetch(`${o.host.base}/api/status?port=${encodeURIComponent(o.label)}`, { cache: 'no-store' })).json();
-    if (j.total) plot.frac = j.done / j.total;
+    if (j.total) plot.frac = Math.max(0, j.done - plot.labelSegs) / Math.max(1, j.total - plot.labelSegs);
     if (!j.busy) {
       clearInterval(plot.timer);
       log(`${o.id}: ${j.state}${j.message ? ', ' + j.message : ''}`, j.state === 'error' ? 'err' : 'note');
@@ -1000,6 +1087,8 @@ function drawPaper() {
   }
   if (play.mode !== 'plot' || !plot.mm.length) return;
   const P = ([x, y]) => [x0 + x * k, y0 + y * k];
+  ex.strokeStyle = '#1b1b1f'; ex.lineWidth = 1.4;
+  for (const st of plot.label || []) { ex.beginPath(); st.forEach((q, i) => { const [a, b] = P(q); i ? ex.lineTo(a, b) : ex.moveTo(a, b); }); ex.stroke(); }
   const upto = Math.floor(plot.frac * (plot.mm.length - 1));
   ex.lineJoin = 'round';
   ex.strokeStyle = 'rgba(0,110,220,0.45)'; ex.lineWidth = 1; ex.beginPath();
