@@ -140,6 +140,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
       <div id="outputs"></div>
       <div id="plotOpts" hidden>
         <label class="f">Plot length, attractor steps (AxiDraw) <input id="pSteps" type="number" value="5000" step="500" min="200" max="50000"></label>
+        <label class="f">Pen speed, % of the machine's own <input id="pSpeed" type="number" value="100" step="10" min="10" max="150"></label>
         <label class="f">Margin (mm; knob &deg; on the Etch A Sketch) <input id="pMargin" type="number" value="15" step="5" min="0"></label>
         <label class="f">Plot password <input id="pPass" type="password" autocomplete="off" placeholder="studio password"></label>
         <div id="labelRow" class="row" style="margin:6px 0">
@@ -199,7 +200,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
       <section>
         <h2>Settings</h2>
         <label class="f">Scale, knob &deg; per unit <input id="cScale" type="number" value="20" step="1" min="1"></label>
-        <label class="f">Speed, knob &deg;/s <input id="cSpeed" type="number" value="60" step="5" min="5" max="250"></label>
+        <label class="f">Speed, knob &deg;/s (laptop Uno) <input id="cSpeed" type="number" value="60" step="5" min="5" max="250"></label>
         <label class="f">Slack X, &deg; <input id="cSlackX" type="number" value="23" step="1" min="0"></label>
         <label class="f">Slack Y, &deg; <input id="cSlackY" type="number" value="17" step="1" min="0"></label>
         <label class="f">Blend (0 = burst) <input id="cBlend" type="number" value="3" step="1" min="0" max="10"></label>
@@ -222,7 +223,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.7.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first; 0.7.0 a closed tab no longer strands a plotter
+const PAGE_VERSION = '0.8.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first; 0.7.0 a closed tab no longer strands a plotter; 0.8.0 pen speed for plotters, live while drawing
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -932,6 +933,11 @@ function paperMapper([u0, u1, v0, v1], travel, margin, rotate) {
   };
 }
 
+// Percent of each machine's own speed in piplot's machines.json (suidraw's
+// feed, an AxiDraw's pen-down %, the Etchatron's knob deg/s). piplot holds it
+// to 10..150; over 100 is faster than the machine was tuned to draw well.
+function penSpeed() { return Math.max(10, Math.min(150, Math.round(+$('pSpeed').value) || 100)); }
+
 async function sessionCall(o, body) {
   const r = await fetch(o.host.base + '/api/session', { method: 'POST', headers: plotHeaders(),
     body: JSON.stringify({ ...body, port: o.label }) });
@@ -952,7 +958,7 @@ async function startSession(o) {
   let r, j;
   // idle_close_s: piplot (0.14.0+) ends the session by itself, pen up and
   // home, if this page stops getting in touch, e.g. the tab was closed.
-  try { [r, j] = await sessionCall(o, { action: 'start', origin_confirmed: true, idle_close_s: SESSION_IDLE_CLOSE_S }); }
+  try { [r, j] = await sessionCall(o, { action: 'start', origin_confirmed: true, idle_close_s: SESSION_IDLE_CLOSE_S, speed_pct: penSpeed() }); }
   catch (e) { log('session request failed: ' + e.message, 'err'); return; }
   if (!r.ok || !j.ok) {
     log(`${o.id} refused: ${j.message || r.status}`, 'err');
@@ -1038,8 +1044,8 @@ async function startPlot(o) {
   try {
     r = await fetch(o.host.base + '/api/plot', { method: 'POST', headers: plotHeaders(),
       body: JSON.stringify(lab.strokes.length
-        ? { paths: [...lab.strokes.map((st) => st.length > 1 ? st : [st[0], st[0]]), mm], port: o.label, origin_confirmed: true }
-        : { points: mm, port: o.label, origin_confirmed: true }) });
+        ? { paths: [...lab.strokes.map((st) => st.length > 1 ? st : [st[0], st[0]]), mm], port: o.label, origin_confirmed: true, speed_pct: penSpeed() }
+        : { points: mm, port: o.label, origin_confirmed: true, speed_pct: penSpeed() }) });
     j = await r.json();
   } catch (e) { log('plot request failed: ' + e.message, 'err'); return; }
   if (!r.ok || !j.ok) {
@@ -1323,6 +1329,17 @@ addEventListener('pagehide', () => {
     fetch(plot.entry.host.base + '/api/session', { method: 'POST', keepalive: true, headers: plotHeaders(),
       body: JSON.stringify({ action: 'end', port: plot.entry.label }) });
   } catch (e) { /* best effort; idle close is the backstop */ }
+});
+
+$('pSpeed').addEventListener('change', async () => {
+  const pct = penSpeed();
+  $('pSpeed').value = pct;
+  if (pct > 100) log(`pen speed ${pct}%: faster than the machine's own setting, lines may suffer`, 'note');
+  if (play.mode !== 'plot' || !plot.session || !plot.entry) return;
+  try {
+    const [r, j] = await sessionCall(plot.entry, { action: 'speed', speed_pct: pct });
+    log(r.ok && j.ok ? `${plot.entry.id}: pen speed now ${j.speed_pct}% (from the next piece)` : `speed change refused: ${j.message || r.status}`, r.ok ? 'note' : 'err');
+  } catch (e) { log('speed change failed: ' + e.message, 'err'); }
 });
 
 setupPassword();
