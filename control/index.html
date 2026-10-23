@@ -7,8 +7,10 @@
 <!-- PAGE_VERSION below: bump on every change, shown in the header -->
 <!--
   Etchatron control page. Open in Chrome or Edge (Web Serial).
-  If file:// will not offer the serial port, serve it:  python -m http.server 8000
-  in this folder, then http://localhost:8000
+  It loads ../lib/timeline.js (the attractor timeline's entries, shared with
+  timeline/index.html), so serve the repo root, not this folder:
+    python -m http.server 8000      then http://localhost:8000/control/
+  On plotterpi the deploy script inlines that file into etchatron.html.
 
   The page does the thinking, controller/controller.ino does the moving.
   Attractors and sound are a port of Thomas Fischer's lorenz_av.py
@@ -16,8 +18,9 @@
   Doppler-shifted harmonic tone, distance gain, level + interaural-time
   panning, Lloyd's-mirror floor reflection, elevation brightness, and the
   firefly afterglow trail.
-  Two attractor sets: corrected (RK4, chaotic settings; the default) and
-  Thomas's originals exactly as written.
+  Three attractor sets: corrected (RK4, chaotic settings; the default),
+  Thomas's originals exactly as written, and the timeline's 16 entries,
+  Ptolemy to Halvorsen (each measured the first time it is picked).
 
   Two modes:
     Screen  Thomas's piece as written: one attractor step per 10 ms audio
@@ -71,6 +74,7 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
 #av { width: 100%; aspect-ratio: 450 / 752; background: #000; border-radius: 8px; display: block; }
 .attractors { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 10px 0; }
+.attractors[hidden] { display: none; }
 .attractors button { padding: 7px 2px; font-size: 13px; }
 .right { display: grid; gap: 16px; align-content: start; }
 .eas-wrap { background: var(--eas-frame); border-radius: 18px; padding: 18px 22px 30px; }
@@ -124,6 +128,11 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
     <div class="row" id="sets">
       <button data-set="corrected" class="active" title="RK4, chaotic settings, smooth trail">Corrected</button>
       <button data-set="original" title="lorenz_av.py as written: Euler steps, Thomas's settings">Thomas's originals</button>
+      <button data-set="timeline" title="the attractor timeline's 16 entries, Ptolemy to Halvorsen">Timeline</button>
+    </div>
+    <div id="tlRow" hidden>
+      <div class="row"><select id="tlPick"></select></div>
+      <p class="hint" id="tlNote" style="color:var(--label);margin:0 0 8px"></p>
     </div>
     <div class="row">
       <button id="btnScreen" class="primary">Play on screen</button>
@@ -227,9 +236,10 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
   </div>
 </main>
 
+<script src="../lib/timeline.js"></script>
 <script>
 'use strict';
-const PAGE_VERSION = '0.9.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first; 0.7.0 a closed tab no longer strands a plotter; 0.8.0 pen speed for plotters, live while drawing; 0.8.1 version bump only (the date edit missed); 0.8.2 label date as day month year; 0.9.0 corrected attractor set (RK4, chaotic Thomas and Halvorsen, smooth trail), Thomas's originals selectable
+const PAGE_VERSION = '0.10.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first; 0.7.0 a closed tab no longer strands a plotter; 0.8.0 pen speed for plotters, live while drawing; 0.8.1 version bump only (the date edit missed); 0.8.2 label date as day month year; 0.9.0 corrected attractor set (RK4, chaotic Thomas and Halvorsen, smooth trail), Thomas's originals selectable; 0.10.0 the timeline's 16 entries as a third set, from ../lib/timeline.js
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -334,6 +344,35 @@ class Gen {
     return this.canon();
   }
   canon() { return this.r.map((v, i) => v * this.scale[i] + this.offset[i]); }
+  clone() { const g = Object.create(Gen.prototype); Object.assign(g, this, { r: [...this.r] }); return g; }
+}
+
+// A timeline entry (../lib/timeline.js) as this page's generator: one step
+// is still one 10 ms block and one move or plot vertex, and the points the
+// timeline draws inside that step ride along in .sub for the trail. The
+// entry's calibration already puts it in TARGET at Lorenz's speed. Entries
+// with a plot plane other than the front are turned so that plane is this
+// page's x-z, which is what the Etch A Sketch and the plotters draw.
+const yearText = (e) => e.yearText || (e.year < 1000 ? e.year + ' CE' : String(e.year));
+class TimelineGen {
+  constructor(entry) {
+    TIMELINE.calibrate(entry);
+    this.e = entry; this.g = new TIMELINE.Gen(entry); this.steps = 0;
+    const [h, v] = entry.plot || [0, 2];
+    this.axes = [h, 3 - h - v, v];
+    const s = this.g.s;
+    this.startText = `${entry.name} (${yearText(entry)}): ${s.length > 3 ? 'first three of ' + s.length + ': ' : ''}`
+      + `${s.slice(0, 3).map((v) => v.toFixed(9)).join(', ')}`;
+  }
+  turn(p) { const T = TIMELINE.TC; return this.axes.map((a, i) => T[i] + p[a] - T[a]); }
+  step() {
+    const sub = this.g.step().map((q) => this.turn(q));
+    this.steps++;
+    const p = [...sub[sub.length - 1]]; p.sub = sub;
+    return p;
+  }
+  canon() { return this.turn(this.g.canon()); }
+  clone() { const c = Object.create(TimelineGen.prototype); Object.assign(c, this, { g: this.g.clone() }); return c; }
 }
 
 // ------------------------------------------------- audio (worklet = the voice)
@@ -928,7 +967,7 @@ const GLYPH = Object.fromEntries(Object.entries(GLYPHS).map(([k, ss]) =>
 // line. Accents go (the font is plain capitals): Rössler is written ROSSLER.
 function labelText() {
   const parts = [];
-  if ($('lName').checked) parts.push(ATTRACTORS[selected].name);
+  if ($('lName').checked) parts.push(currentName());
   if ($('lDate').checked) {
     const d = new Date();
     // day month year, month in words: 23 OCTOBER 2026 (Sui, 23 Oct)
@@ -972,7 +1011,7 @@ const SESSION_IDLE_CLOSE_S = 120;
 // The sheet is sized from a long silent run of the same attractor from the
 // same start, since a drawing that never ends cannot be fitted afterwards.
 function boundsAhead(gen, rotate, n = 40000) {
-  const g = new Gen(gen.index, gen.set); g.r = [...gen.r];
+  const g = gen.clone();
   let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
   for (let i = 0; i < n; i++) {
     const p = g.step(), u = rotate ? p[2] : p[0], v = rotate ? -p[0] : p[2];
@@ -1224,7 +1263,9 @@ function log(s, cls) {
 function setConn(cls, text) { const c = $('conn'); c.className = 'chip ' + cls; c.textContent = text; }
 function setFw(t) { const f = $('fw'); f.hidden = false; f.className = 'chip on'; f.textContent = t; }
 
-let selected = 0;
+let selected = 0, setName = 'corrected';
+let tlIndex = TIMELINE.ENTRIES.findIndex((e) => e.id === 'lorenz');
+const currentName = () => setName === 'timeline' ? TIMELINE.ENTRIES[tlIndex].name : ATTRACTORS[selected].name;
 ATTRACTORS.forEach((a, i) => {
   const b = document.createElement('button'); b.textContent = a.name; b.dataset.i = i;
   b.onclick = () => selectAttractor(i); $('attractors').appendChild(b);
@@ -1238,12 +1279,46 @@ selectAttractor(0);
 // Like the attractor buttons: switches live on screen; a drawing or plot
 // already running keeps the set it started with.
 function selectSet(name) {
-  ATTRACTORS = name === 'original' ? ORIGINAL : CORRECTED;
+  setName = name;
+  if (name !== 'timeline') ATTRACTORS = name === 'original' ? ORIGINAL : CORRECTED;
   [...$('sets').children].forEach((b) => b.classList.toggle('active', b.dataset.set === name));
+  $('attractors').hidden = name === 'timeline';
+  $('tlRow').hidden = name !== 'timeline';
+  if (name === 'timeline') tlNote();
   if (play.mode === 'screen') { play.gen = newGen(); play.breakAt = play.pushed; }
 }
 [...$('sets').children].forEach((b) => { b.onclick = () => selectSet(b.dataset.set); });
-function newGen() { const g = new Gen(selected); $('sStart').textContent = g.startText; return g; }
+
+// The timeline's entries, grouped by era, oldest first.
+for (const [key, era] of Object.entries(TIMELINE.ERAS)) {
+  const g = document.createElement('optgroup'); g.label = era.name;
+  TIMELINE.ENTRIES.forEach((e, i) => {
+    if (e.era !== key) return;
+    const o = document.createElement('option'); o.value = i;
+    o.textContent = `${yearText(e)}  ${e.name}`;
+    g.append(o);
+  });
+  $('tlPick').append(g);
+}
+function tlNote() {
+  const e = TIMELINE.ENTRIES[tlIndex];
+  $('tlPick').value = tlIndex;
+  $('tlNote').textContent = `${e.who}. ${TIMELINE.BEHAVES[e.behaves]}.`
+    + (e.plot ? ` Drawn from the ${e.plot[1] === 1 ? 'top' : 'side'}.` : '');
+}
+// Switches live on screen, like the attractor buttons; a drawing or plot
+// already running keeps the entry it started with. An entry's first pick
+// measures it, a second or so of silent running.
+function selectEntry(i) {
+  tlIndex = (i + TIMELINE.ENTRIES.length) % TIMELINE.ENTRIES.length;
+  tlNote();
+  if (play.mode === 'screen') { play.gen = newGen(); play.breakAt = play.pushed; }
+}
+$('tlPick').onchange = () => selectEntry(+$('tlPick').value);
+function newGen() {
+  const g = setName === 'timeline' ? new TimelineGen(TIMELINE.ENTRIES[tlIndex]) : new Gen(selected);
+  $('sStart').textContent = g.startText; return g;
+}
 
 async function startScreen() {
   if (play.mode === 'draw') stopAll();
@@ -1255,15 +1330,15 @@ async function startScreen() {
 
 // Before drawing, run the attractor silently to the point nearest the
 // centre of the box, so the first move from a centred stylus is tiny.
+// Returns a copy of the generator as it was at that point.
 function warmToCentre(g) {
   for (let i = 0; i < 500; i++) g.step();
-  let best = Infinity, bestState = null, bestSteps = 0;
+  let best = Infinity, bestGen = g.clone();
   for (let i = 0; i < 20000; i++) {
     const p = g.step(), d = Math.hypot(p[0] - XC, p[2] - ZC);
-    if (d < best) { best = d; bestState = [...g.r]; bestSteps = g.steps; }
+    if (d < best) { best = d; bestGen = g.clone(); }
   }
-  g.r = bestState; g.steps = bestSteps;
-  return g.canon();
+  return bestGen;
 }
 
 async function startDraw() {
@@ -1271,8 +1346,8 @@ async function startDraw() {
   if (play.mode === 'screen') stopAll();
   await ensureAudio();
   resetPlayhead();
-  play.gen = newGen();
-  const p0 = warmToCentre(play.gen);
+  play.gen = warmToCentre(newGen());
+  const p0 = play.gen.canon();
   draw.movePts = [p0];   // move base+n goes from movePts[n-1] to movePts[n]
   draw.base = machine.sent;
   draw.rotate = $('cRotate').checked;   // fixed for the whole drawing
@@ -1281,7 +1356,7 @@ async function startDraw() {
   if (!machine.motors) { machine.cmd('E 1'); machine.motors = true; }
   play.mode = 'draw'; play.paused = false;
   modeButtons();
-  log(`drawing ${ATTRACTORS[selected].name} from the centre`, 'note');
+  log(`drawing ${currentName()} from the centre`, 'note');
   feedMachine();   // first moves now, not on the next animation frame
 }
 
@@ -1377,8 +1452,10 @@ const sendRaw = () => { const v = $('cmd').value.trim(); if (!v || !machine) ret
 $('btnCmd').onclick = sendRaw;
 $('cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendRaw(); });
 document.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT') return;
-  if (e.key >= '1' && e.key <= '5') selectAttractor(+e.key - 1);
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (setName !== 'timeline' && e.key >= '1' && e.key <= '5') selectAttractor(+e.key - 1);
+  if (setName === 'timeline' && e.key === 'ArrowRight') selectEntry(tlIndex + 1);
+  if (setName === 'timeline' && e.key === 'ArrowLeft') selectEntry(tlIndex - 1);
   if (e.key === 'Escape') $('btnStop').click();
 });
 
