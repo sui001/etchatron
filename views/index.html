@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Etchatron Views</title>
+<!-- PAGE_VERSION below: bump on every change, shown in the header -->
+<!--
+  Etchatron views. One strange attractor, four live screens:
+    down x   the y-z plane
+    down y   the x-z plane (the control page's left screen)
+    down z   the x-y plane
+    orthogonal  an axonometric 3D view, drag to turn it
+
+  Attractors are the control page's port of Thomas Fischer's lorenz_av.py
+  (../control/thomas/lorenz_av.py): five attractors mapped into one
+  Lorenz-sized box, dt calibrated for equal average speed. One generator,
+  100 steps a second, every step goes to all four screens.
+
+  Screens only: no sound, no machine output. Serve it with
+    python -m http.server 8000 --directory views
+  then http://localhost:8000
+-->
+<style>
+:root {
+  --bg: #0b0d0b;
+  --panel: #151a14;
+  --panel-2: #1d2419;
+  --line: #34412c;
+  --text: #f2ffe6;
+  --label: #c8f59a;
+  --accent: #b9ff5a;
+  --accent-ink: #0b1400;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 18px; margin: 0; letter-spacing: .5px; }
+button { font: inherit; font-weight: 600; color: var(--text); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.active { outline: 2px solid var(--accent); outline-offset: 1px; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 12px 16px 0; }
+.attractors { display: flex; gap: 6px; flex-wrap: wrap; }
+.spacer { flex: 1; }
+.stats { display: flex; gap: 16px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.stats span { color: var(--label); }
+.stats b { font-weight: 600; }
+main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 16px;
+  max-width: 1240px; }
+@media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--label); margin: 0 0 10px; }
+h2 small { text-transform: none; letter-spacing: 0; color: var(--text); font-weight: 400; font-size: 13px; }
+canvas { width: 100%; aspect-ratio: 1; background: #000; border-radius: 8px; display: block; }
+#vo { cursor: grab; touch-action: none; }
+#vo.drag { cursor: grabbing; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Etchatron views <span id="pageVer" style="color:var(--accent);font-size:15px"></span></h1>
+</header>
+
+<div class="controls">
+  <div class="attractors" id="attractors"></div>
+  <button id="btnPlay" class="primary">Pause</button>
+  <button id="btnRestart">New start</button>
+  <div class="spacer"></div>
+  <div class="stats">
+    <div><span>Start</span> <b id="sStart">-</b></div>
+    <div><span>Steps</span> <b id="sSteps">0</b></div>
+  </div>
+</div>
+
+<main>
+  <section><h2>Down x <small>(y-z plane)</small></h2><canvas id="vx" width="560" height="560"></canvas></section>
+  <section><h2>Down y <small>(x-z plane)</small></h2><canvas id="vy" width="560" height="560"></canvas></section>
+  <section><h2>Down z <small>(x-y plane)</small></h2><canvas id="vz" width="560" height="560"></canvas></section>
+  <section><h2>Orthogonal <small>(drag to turn)</small></h2><canvas id="vo" width="560" height="560"></canvas></section>
+</main>
+
+<script>
+'use strict';
+const PAGE_VERSION = '0.1.0';   // 0.1.0 first page: four screens, no sound, no output
+document.getElementById('pageVer').textContent = 'v' + PAGE_VERSION;
+const $ = (id) => document.getElementById(id);
+
+// --------------------------------- attractors (as control/index.html, lorenz_av.py port)
+const TARGET = [[-19, 21], [-24, 25], [1, 54]];
+const START_JITTER = 0.05;
+
+const dLorenz = (x, y, z) => [10 * (y - x), 28 * x - x * z - y, x * y - (8 / 3) * z];
+const dRossler = (x, y, z) => [-y - z, x + 0.2 * y, 0.2 + z * (x - 5.7)];
+const dThomas = (x, y, z) => { const b = 0.208186;
+  return [Math.sin(y) - b * x, Math.sin(z) - b * y, Math.sin(x) - b * z]; };
+const dAizawa = (x, y, z) => { const a = 0.95, ab = 0.7, c = 0.6, d = 3.5, e = 0.25, f = 0.1;
+  return [(z - ab) * x - d * y, d * x + (z - ab) * y,
+    c + a * z - z ** 3 / 3 - (x * x + y * y) * (1 + e * z) + f * z * x ** 3]; };
+const dHalvorsen = (x, y, z) => { const a = 1.89;
+  return [-a * x - 4 * y - 4 * z - y * y, -a * y - 4 * z - 4 * x - z * z, -a * z - 4 * x - 4 * y - x * x]; };
+
+const ATTRACTORS = [
+  { name: 'Lorenz',    d: dLorenz,    dt: 0.01000, sub: 1, start: [0, 1, 1.05], ranges: TARGET },
+  { name: 'Rössler',   d: dRossler,   dt: 0.04208, sub: 1, start: [1.1125, -6.1135, 0.0360],
+    ranges: [[-9.62, 12.79], [-11.81, 8.03], [0.01, 38.81]] },
+  { name: 'Thomas',    d: dThomas,    dt: 0.11213, sub: 1, start: [3.2616, 2.3306, 1.9864],
+    ranges: [[-1.07, 3.78], [-1.07, 3.78], [-1.07, 3.78]] },
+  { name: 'Aizawa',    d: dAizawa,    dt: 0.02680, sub: 4, start: [0.0624, 0.0830, -0.2338],
+    ranges: [[-1.55, 1.54], [-1.50, 1.59], [-0.60, 1.93]] },
+  { name: 'Halvorsen', d: dHalvorsen, dt: 0.00878, sub: 1, start: [-5.5514, -2.2521, 0.7790],
+    ranges: [[-12.58, 6.51], [-13.32, 6.42], [-12.95, 6.26]] },
+];
+
+class Gen {
+  constructor(index) {
+    const a = ATTRACTORS[index];
+    this.index = index; this.a = a; this.steps = 0;
+    this.scale = []; this.offset = [];
+    a.ranges.forEach(([lo, hi], i) => {
+      const [tlo, thi] = TARGET[i], k = (thi - tlo) / (hi - lo);
+      this.scale.push(k); this.offset.push(tlo - lo * k);
+    });
+    const jy = (a.ranges[1][1] - a.ranges[1][0]) / 50, jz = (a.ranges[2][1] - a.ranges[2][0]) / 53;
+    const r = () => (Math.random() * 2 - 1) * START_JITTER;
+    this.r = [a.start[0], a.start[1] + r() * jy, a.start[2] + r() * jz];
+    this.startText = `${a.name}: y = ${this.r[1].toFixed(9)}, z = ${this.r[2].toFixed(9)}`;
+  }
+  step() {
+    const h = this.a.dt / this.a.sub;
+    for (let i = 0; i < this.a.sub; i++) {
+      const [dx, dy, dz] = this.a.d(...this.r);
+      this.r[0] += dx * h; this.r[1] += dy * h; this.r[2] += dz * h;
+    }
+    this.steps++;
+    return this.canon();
+  }
+  canon() { return this.r.map((v, i) => v * this.scale[i] + this.offset[i]); }
+}
+
+// --------------------------------------------------------------- the trail
+// The control page's afterglow, done the same way: each view has its own
+// persistent trail canvas, and every frame it is multiplied by
+// (242, 252, 238)/255 with 2.5% black laid over it, so red and blue die
+// faster than green and the trace settles from warm yellow through firefly
+// green. 8-bit rounding stalls the fade near the bottom, which leaves the
+// faint ghost of the whole figure the control page shows.
+//
+// The orthogonal view can turn, which would smear a persistent canvas. When
+// it turns, its trail is rebuilt from a history of points, each in the
+// colour that fade would have left it after its age in frames. DECAY is that
+// fade in 8-bit arithmetic, rounding to nearest. It stalls at rgb(9,21,7);
+// the live trail canvas measured rgb(9,21,6) in Chrome, near enough. (Fading
+// a small test canvas does not work: Chrome keeps small canvases on the CPU,
+// which truncates and fades to black.)
+const FRAME_MS = 1000 / 60;
+const HIST_MAX = 30000;                                // 5 minutes of points for a rebuild
+const GAIN_LO = 0.17, GAIN_HI = 0.60, DIM = [80, 150, 40], HOT = [225, 255, 110];
+const OBS = [1.177, 24.787, 27.280];                   // Thomas's listener, kept for brightness
+const gainOf = (p) => 0.03 + Math.hypot(OBS[0] - p[0], OBS[1] - p[1], OBS[2] - p[2]) / 92;
+const loud = (g) => Math.max(0, Math.min(1, (g - GAIN_LO) / (GAIN_HI - GAIN_LO)));
+
+function fade(ctx, n) {
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.fillStyle = 'rgb(242,252,238)'; ctx.fillRect(0, 0, n, n);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(0,0,0,0.025)'; ctx.fillRect(0, 0, n, n);
+}
+// DECAY[f][4 * v + ch]: channel value v after f frames of fade
+const DECAY = (() => {
+  const mul = [242, 252, 238, 255], keep = 1 - Math.round(0.025 * 255) / 255;
+  let row = new Uint8Array(1024);
+  for (let i = 0; i < 1024; i++) row[i] = i >> 2;
+  const rows = [row];
+  for (let f = 1; f < 2000; f++) {
+    const next = row.map((v, i) => Math.round(Math.round(v * mul[i & 3] / 255) * keep));
+    rows.push(next);
+    if (next.every((v, i) => v === row[i])) break;   // fade has stalled everywhere
+    row = next;
+  }
+  return rows;
+})();
+const faded = (c, frames) => {
+  const row = DECAY[Math.min(DECAY.length - 1, Math.max(0, Math.round(frames)))];
+  return c.map((v, ch) => row[4 * v + ch]);
+};
+
+// history: { p, t, c, k, brk } = point, time played, colour, loudness, no line into it
+const hist = [];
+let drawnTo = 0;                                       // hist[drawnTo..] not yet on the trails
+function addPoint(p, t, brk) {
+  const k = loud(gainOf(p));
+  hist.push({ p, t, k, brk, c: DIM.map((a, i) => Math.round(a + (HOT[i] - a) * k)) });
+}
+
+// -------------------------------------------------------------- the views
+const C = TARGET.map(([lo, hi]) => (lo + hi) / 2);     // centre of the box
+const SS = 2;                                          // supersampling, as the control page
+const AXIS = ['#ff6b6b', '#5dff8a', '#7fd7ff'];        // x, y, z
+const AXN = ['x', 'y', 'z'];
+const orient = { yaw: -0.6, pitch: 0.45 };             // orthogonal view, radians
+
+function flatView(id, h, v) {
+  return { id, h, v, proj(p, W) {
+    const K = (W / 2 - 20) / 29;                       // one scale for all flat views: the z span fits
+    return [W / 2 + (p[h] - C[h]) * K, W / 2 - (p[v] - C[v]) * K];
+  } };
+}
+function rot(d) {
+  // turn about z (up), then tilt the eye up by pitch; returns screen right, up
+  const cy = Math.cos(orient.yaw), sy = Math.sin(orient.yaw);
+  const cp = Math.cos(orient.pitch), sp = Math.sin(orient.pitch);
+  const x = d[0] * cy - d[1] * sy, y = d[0] * sy + d[1] * cy;
+  return [x, d[2] * cp + y * sp];
+}
+const VIEWS = [
+  flatView('vx', 1, 2),
+  flatView('vy', 0, 2),
+  flatView('vz', 0, 1),
+  { id: 'vo', ortho: true, proj(p, W) {
+    const K = (W / 2 - 20) / 42;                       // half-diagonal of the box, any turn fits
+    const [u, v] = rot([p[0] - C[0], p[1] - C[1], p[2] - C[2]]);
+    return [W / 2 + u * K, W / 2 - v * K];
+  } },
+];
+for (const v of VIEWS) {
+  v.cv = $(v.id); v.cx = v.cv.getContext('2d'); v.W = v.cv.width;
+  v.trail = document.createElement('canvas'); v.trail.width = v.trail.height = v.W * SS;
+  v.tx = v.trail.getContext('2d'); v.tx.fillStyle = '#000'; v.tx.fillRect(0, 0, v.W * SS, v.W * SS);
+  v.prev = null; v.head = null; v.dirty = false;
+}
+
+function segment(t, a, b) {
+  t.moveTo(a[0] * SS, a[1] * SS); t.lineTo(b[0] * SS, b[1] * SS);
+}
+
+// The whole trail again from history, at each point's faded colour. Segments
+// of one colour share a path: most of a long history is the stalled ghost.
+function rebuild(v, now) {
+  const t = v.tx, n = v.W * SS, groups = new Map();
+  t.fillStyle = '#000'; t.fillRect(0, 0, n, n);
+  let prev = null;
+  for (let i = 0; i < hist.length; i++) {
+    const h = hist[i], s = v.proj(h.p, v.W);
+    if (prev && !h.brk) {
+      const c = faded(h.c, (now - h.t) / FRAME_MS);
+      if (c[0] || c[1] || c[2]) {
+        const key = `rgb(${c})`;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(prev, s);
+      }
+    }
+    prev = s;
+  }
+  t.lineCap = 'round'; t.lineWidth = 2 * SS;
+  for (const [key, segs] of groups) {
+    t.strokeStyle = key; t.beginPath();
+    for (let i = 0; i < segs.length; i += 2) segment(t, segs[i], segs[i + 1]);
+    t.stroke();
+  }
+  v.prev = prev; v.dirty = false;
+}
+
+function render(v, now) {
+  const W = v.W, t = v.tx;
+  if (v.dirty) rebuild(v, now);
+  else {
+    fade(t, W * SS);
+    t.lineCap = 'round'; t.lineWidth = 2 * SS;
+    for (let i = drawnTo; i < hist.length; i++) {
+      const h = hist[i], s = v.proj(h.p, W);
+      if (h.brk) v.prev = null;                          // attractor switched: no joining line
+      if (v.prev) { t.strokeStyle = `rgb(${h.c})`; t.beginPath(); segment(t, v.prev, s); t.stroke(); }
+      v.prev = s;
+    }
+  }
+  const last = hist[hist.length - 1];
+  v.head = last ? [v.proj(last.p, W), last.k] : null;
+  const x = v.cx;
+  x.globalCompositeOperation = 'source-over';
+  x.drawImage(v.trail, 0, 0, W, W);
+  x.globalCompositeOperation = 'lighter';
+  x.globalAlpha = 0.35; x.filter = 'blur(10px)';
+  x.drawImage(v.trail, 0, 0, W, W);
+  x.filter = 'none'; x.globalAlpha = 1; x.globalCompositeOperation = 'source-over';
+  if (v.head) {
+    const [[hx, hy], k] = v.head;
+    for (const [r, a] of [[26, 16], [16, 40], [9, 105]]) {
+      x.fillStyle = `rgba(185,255,90,${(a * (0.35 + 0.65 * k)) / 255})`;
+      x.beginPath(); x.arc(hx, hy, r, 0, 7); x.fill();
+    }
+    x.fillStyle = 'rgb(255,250,205)'; x.beginPath(); x.arc(hx, hy, 2 + 2 * k, 0, 7); x.fill();
+  }
+  drawAxes(v);
+}
+
+// Which way is which: arrows in the bottom left corner, in the axis colours.
+function drawAxes(v) {
+  const x = v.cx, o = [28, v.W - 28], L = 34;
+  const dirs = v.ortho ? [0, 1, 2].map((i) => { const d = [0, 0, 0]; d[i] = 1; return rot(d); })
+    : [0, 1, 2].map((i) => i === v.h ? [1, 0] : i === v.v ? [0, 1] : null);
+  x.lineWidth = 2; x.font = '600 15px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  dirs.forEach((d, i) => {
+    if (!d) return;
+    const e = [o[0] + d[0] * L, o[1] - d[1] * L];
+    x.strokeStyle = x.fillStyle = AXIS[i];
+    x.beginPath(); x.moveTo(o[0], o[1]); x.lineTo(e[0], e[1]); x.stroke();
+    const m = Math.hypot(d[0], d[1]) || 1;
+    x.fillText(AXN[i], o[0] + d[0] / m * (L * Math.max(m, 0.35) + 11), o[1] - d[1] / m * (L * Math.max(m, 0.35) + 11));
+  });
+}
+
+// Drag the orthogonal view to turn it.
+(() => {
+  const cv = $('vo'); let last = null;
+  cv.addEventListener('pointerdown', (e) => { last = [e.clientX, e.clientY]; cv.setPointerCapture(e.pointerId); cv.classList.add('drag'); });
+  cv.addEventListener('pointermove', (e) => {
+    if (!last) return;
+    const k = 0.01 * cv.width / cv.clientWidth;
+    orient.yaw += (e.clientX - last[0]) * k;
+    orient.pitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, orient.pitch + (e.clientY - last[1]) * k));
+    last = [e.clientX, e.clientY];
+    VIEWS[3].dirty = true;
+  });
+  const up = () => { last = null; cv.classList.remove('drag'); };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+})();
+
+// -------------------------------------------------------------- the clock
+// 100 steps a second on the wall clock, as the control page's 10 ms audio
+// block. A tab left in the background skips ahead rather than racing.
+const play = { gen: null, paused: false, t0: 0, n: 0, brk: true };
+function rebase() { play.t0 = performance.now(); play.n = 0; }
+
+function advance(now) {
+  if (play.paused) return;
+  const due = Math.floor((now - play.t0) / 10);
+  if (due - play.n > 300) play.n = due - 300;
+  while (play.n < due) {
+    play.n++;
+    addPoint(play.gen.step(), play.t0 + play.n * 10, play.brk);
+    play.brk = false;
+  }
+}
+
+function frame(now) {
+  now = performance.now();
+  advance(now);
+  for (const v of VIEWS) render(v, now);
+  drawnTo = hist.length;
+  if (hist.length > HIST_MAX + 1000) { hist.splice(0, hist.length - HIST_MAX); drawnTo = hist.length; }
+  $('sSteps').textContent = play.gen.steps;
+  requestAnimationFrame(frame);
+}
+
+// --------------------------------------------------------------- controls
+let selected = 0;
+ATTRACTORS.forEach((a, i) => {
+  const b = document.createElement('button'); b.textContent = a.name; b.dataset.i = i;
+  b.onclick = () => selectAttractor(i); $('attractors').appendChild(b);
+});
+function newGen() {
+  // switching or restarting live, like the original: the old trail fades, no joining line
+  play.gen = new Gen(selected); play.brk = true;
+  $('sStart').textContent = play.gen.startText;
+}
+function selectAttractor(i) {
+  selected = i;
+  [...$('attractors').children].forEach((b) => b.classList.toggle('active', +b.dataset.i === i));
+  newGen();
+}
+$('btnPlay').onclick = () => {
+  play.paused = !play.paused;
+  if (!play.paused) rebase();
+  $('btnPlay').textContent = play.paused ? 'Play' : 'Pause';
+};
+$('btnRestart').onclick = newGen;
+document.addEventListener('keydown', (e) => {
+  if (e.key >= '1' && e.key <= '5') selectAttractor(+e.key - 1);
+});
+
+selectAttractor(0);
+rebase();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
