@@ -16,6 +16,8 @@
   Doppler-shifted harmonic tone, distance gain, level + interaural-time
   panning, Lloyd's-mirror floor reflection, elevation brightness, and the
   firefly afterglow trail.
+  Two attractor sets: corrected (RK4, chaotic settings; the default) and
+  Thomas's originals exactly as written.
 
   Two modes:
     Screen  Thomas's piece as written: one attractor step per 10 ms audio
@@ -119,6 +121,10 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
     <h2>Attractor</h2>
     <canvas id="av" width="450" height="752"></canvas>
     <div class="attractors" id="attractors"></div>
+    <div class="row" id="sets">
+      <button data-set="corrected" class="active" title="RK4, chaotic settings, smooth trail">Corrected</button>
+      <button data-set="original" title="lorenz_av.py as written: Euler steps, Thomas's settings">Thomas's originals</button>
+    </div>
     <div class="row">
       <button id="btnScreen" class="primary">Play on screen</button>
       <button id="btnDraw">Draw on Etch A Sketch</button>
@@ -223,7 +229,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.8.2';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first; 0.7.0 a closed tab no longer strands a plotter; 0.8.0 pen speed for plotters, live while drawing; 0.8.1 version bump only (the date edit missed); 0.8.2 label date as day month year
+const PAGE_VERSION = '0.9.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first; 0.7.0 a closed tab no longer strands a plotter; 0.8.0 pen speed for plotters, live while drawing; 0.8.1 version bump only (the date edit missed); 0.8.2 label date as day month year; 0.9.0 corrected attractor set (RK4, chaotic Thomas and Halvorsen, smooth trail), Thomas's originals selectable
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -245,7 +251,9 @@ const dAizawa = (x, y, z) => { const a = 0.95, ab = 0.7, c = 0.6, d = 3.5, e = 0
 const dHalvorsen = (x, y, z) => { const a = 1.89;
   return [-a * x - 4 * y - 4 * z - y * y, -a * y - 4 * z - 4 * x - z * z, -a * z - 4 * x - 4 * y - x * x]; };
 
-const ATTRACTORS = [
+// Thomas's originals, exactly as lorenz_av.py runs them: one Euler step
+// per 10 ms block.
+const ORIGINAL = [
   { name: 'Lorenz',    d: dLorenz,    dt: 0.01000, sub: 1, start: [0, 1, 1.05], ranges: TARGET },
   { name: 'Rössler',   d: dRossler,   dt: 0.04208, sub: 1, start: [1.1125, -6.1135, 0.0360],
     ranges: [[-9.62, 12.79], [-11.81, 8.03], [0.01, 38.81]] },
@@ -257,10 +265,46 @@ const ATTRACTORS = [
     ranges: [[-12.58, 6.51], [-13.32, 6.42], [-12.95, 6.26]] },
 ];
 
+// Corrected (Sui, 23 Oct; same set as views/index.html). Tested by nudging
+// the start by 1e-9 and timing how long the copy takes to drift away: as
+// written, only Lorenz is chaotic. Euler's error snaps Rössler onto a closed
+// loop and damps Aizawa, and Halvorsen a = 1.89 and Thomas b = 0.208186 are
+// periodic windows whatever the stepping. So here: RK4 in SUBS substeps per
+// step, Halvorsen a = 1.4 and Thomas b = 0.185 (chaotic from five jittered
+// starts out of five; 0.19 is another window). Ranges are min/max over 4000
+// time units of RK4, dt gives each Lorenz's average speed in the TARGET box,
+// as lorenz_av.py's calibration does. One step is still one 10 ms block, one
+// move, one plot vertex; the substeps only smooth the on-screen trail.
+const SUBS = 6;
+const dThomas185 = (x, y, z) => { const b = 0.185;
+  return [Math.sin(y) - b * x, Math.sin(z) - b * y, Math.sin(x) - b * z]; };
+const dHalvorsen14 = (x, y, z) => { const a = 1.4;
+  return [-a * x - 4 * y - 4 * z - y * y, -a * y - 4 * z - 4 * x - z * z, -a * z - 4 * x - 4 * y - x * x]; };
+const CORRECTED = [
+  { name: 'Lorenz',    d: dLorenz,      dt: 0.01000, rk: true, start: [0, 1, 1.05], ranges: TARGET },
+  { name: 'Rössler',   d: dRossler,     dt: 0.04771, rk: true, start: [7.7202, -8.5294, 0.1526],
+    ranges: [[-9.11, 11.43], [-10.79, 7.84], [0.01, 22.85]] },
+  { name: 'Thomas',    d: dThomas185,   dt: 0.23003, rk: true, start: [0.1968, -0.8232, 0.4731],
+    ranges: [[-4.16, 4.16], [-4.16, 4.16], [-4.16, 4.15]] },
+  { name: 'Aizawa',    d: dAizawa,      dt: 0.02294, rk: true, start: [-1.0862, -0.3977, 1.3862],
+    ranges: [[-1.50, 1.49], [-1.45, 1.53], [-0.37, 1.85]] },
+  { name: 'Halvorsen', d: dHalvorsen14, dt: 0.01029, rk: true, start: [1.4469, -6.4370, -4.4553],
+    ranges: [[-13.32, 6.36], [-13.32, 6.36], [-13.32, 6.36]] },
+];
+let ATTRACTORS = CORRECTED;
+
+function rk4(d, r, h) {
+  const k1 = d(...r);
+  const k2 = d(...r.map((v, i) => v + k1[i] * h / 2));
+  const k3 = d(...r.map((v, i) => v + k2[i] * h / 2));
+  const k4 = d(...r.map((v, i) => v + k3[i] * h));
+  return r.map((v, i) => v + (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]) * h / 6);
+}
+
 class Gen {
-  constructor(index) {
-    const a = ATTRACTORS[index];
-    this.index = index; this.a = a; this.steps = 0;
+  constructor(index, set = ATTRACTORS) {
+    const a = set[index];
+    this.index = index; this.set = set; this.a = a; this.steps = 0;
     this.scale = []; this.offset = [];
     a.ranges.forEach(([lo, hi], i) => {
       const [tlo, thi] = TARGET[i], k = (thi - tlo) / (hi - lo);
@@ -269,9 +313,18 @@ class Gen {
     const jy = (a.ranges[1][1] - a.ranges[1][0]) / 50, jz = (a.ranges[2][1] - a.ranges[2][0]) / 53;
     const r = () => (Math.random() * 2 - 1) * START_JITTER;
     this.r = [a.start[0], a.start[1] + r() * jy, a.start[2] + r() * jz];
-    this.startText = `${a.name}: y = ${this.r[1].toFixed(9)}, z = ${this.r[2].toFixed(9)}`;
+    this.startText = `${a.name}${a.rk ? '' : ' (as written)'}: y = ${this.r[1].toFixed(9)}, z = ${this.r[2].toFixed(9)}`;
   }
+  // one step = one 10 ms block; a corrected step's point carries its
+  // substeps in .sub, for the trail only
   step() {
+    if (this.a.rk) {
+      const h = this.a.dt / SUBS, sub = [];
+      for (let i = 0; i < SUBS; i++) { this.r = rk4(this.a.d, this.r, h); sub.push(this.canon()); }
+      this.steps++;
+      const p = this.canon(); p.sub = sub;
+      return p;
+    }
     const h = this.a.dt / this.a.sub;
     for (let i = 0; i < this.a.sub; i++) {
       const [dx, dy, dz] = this.a.d(...this.r);
@@ -436,9 +489,13 @@ function drawTrail() {
     const p = play.pts[play.readTo++];
     const s = toScreen(p[0], p[2]), g = gainOf(p);
     if (trailPrev) {
-      const t = loud(g), c = DIM.map((a, i) => Math.round(a + (HOT[i] - a) * t));
-      tx.strokeStyle = `rgb(${c})`;
-      tx.beginPath(); tx.moveTo(trailPrev[0] * SS, trailPrev[1] * SS); tx.lineTo(s[0] * SS, s[1] * SS); tx.stroke();
+      // through the substeps when the step has them, so the trace is the curve
+      for (const q of p.sub || [p]) {
+        const sq = toScreen(q[0], q[2]), t = loud(gainOf(q)), c = DIM.map((a, i) => Math.round(a + (HOT[i] - a) * t));
+        tx.strokeStyle = `rgb(${c})`;
+        tx.beginPath(); tx.moveTo(trailPrev[0] * SS, trailPrev[1] * SS); tx.lineTo(sq[0] * SS, sq[1] * SS); tx.stroke();
+        trailPrev = sq;
+      }
     }
     trailPrev = s; trailHead = [s, g];
   }
@@ -915,7 +972,7 @@ const SESSION_IDLE_CLOSE_S = 120;
 // The sheet is sized from a long silent run of the same attractor from the
 // same start, since a drawing that never ends cannot be fitted afterwards.
 function boundsAhead(gen, rotate, n = 40000) {
-  const g = new Gen(gen.index); g.r = [...gen.r];
+  const g = new Gen(gen.index, gen.set); g.r = [...gen.r];
   let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
   for (let i = 0; i < n; i++) {
     const p = g.step(), u = rotate ? p[2] : p[0], v = rotate ? -p[0] : p[2];
@@ -1178,6 +1235,14 @@ function selectAttractor(i) {
   if (play.mode === 'screen') { play.gen = newGen(); play.breakAt = play.pushed; }   // switch live, like the original
 }
 selectAttractor(0);
+// Like the attractor buttons: switches live on screen; a drawing or plot
+// already running keeps the set it started with.
+function selectSet(name) {
+  ATTRACTORS = name === 'original' ? ORIGINAL : CORRECTED;
+  [...$('sets').children].forEach((b) => b.classList.toggle('active', b.dataset.set === name));
+  if (play.mode === 'screen') { play.gen = newGen(); play.breakAt = play.pushed; }
+}
+[...$('sets').children].forEach((b) => { b.onclick = () => selectSet(b.dataset.set); });
 function newGen() { const g = new Gen(selected); $('sStart').textContent = g.startText; return g; }
 
 async function startScreen() {
