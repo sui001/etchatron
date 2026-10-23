@@ -50,9 +50,10 @@ button.active { outline: 2px solid var(--accent); outline-offset: 1px; }
 .stats { display: flex; gap: 16px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
 .stats span { color: var(--label); }
 .stats b { font-weight: 600; }
+/* drafting layout (third angle): top over front, side beside front */
 main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 16px;
-  max-width: 1240px; }
-@media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  max-width: 1240px; grid-template-areas: "top orth" "front side"; }
+@media (max-width: 800px) { main { grid-template-columns: 1fr; grid-template-areas: "top" "front" "side" "orth"; } }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--label); margin: 0 0 10px; }
 h2 small { text-transform: none; letter-spacing: 0; color: var(--text); font-weight: 400; font-size: 13px; }
@@ -78,15 +79,15 @@ canvas { width: 100%; aspect-ratio: 1; background: #000; border-radius: 8px; dis
 </div>
 
 <main>
-  <section><h2>Side <small>(from the right, looking along x: y-z plane)</small></h2><canvas id="vx" width="560" height="560"></canvas></section>
-  <section><h2>Front <small>(looking along y: x-z plane)</small></h2><canvas id="vy" width="560" height="560"></canvas></section>
-  <section><h2>Top <small>(looking down z: x-y plane)</small></h2><canvas id="vz" width="560" height="560"></canvas></section>
-  <section><h2>Orthogonal <small>(drag to turn)</small></h2><canvas id="vo" width="560" height="560"></canvas></section>
+  <section style="grid-area:side"><h2>Side <small>(from the right, looking along x: y-z plane)</small></h2><canvas id="vx" width="560" height="560"></canvas></section>
+  <section style="grid-area:front"><h2>Front <small>(looking along y: x-z plane)</small></h2><canvas id="vy" width="560" height="560"></canvas></section>
+  <section style="grid-area:top"><h2>Top <small>(looking down z: x-y plane)</small></h2><canvas id="vz" width="560" height="560"></canvas></section>
+  <section style="grid-area:orth"><h2>Orthogonal <small>(drag to turn)</small></h2><canvas id="vo" width="560" height="560"></canvas></section>
 </main>
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.1.1';   // 0.1.0 first page: four screens, no sound, no output; 0.1.1 side, front, top labels
+const PAGE_VERSION = '0.1.2';   // 0.1.0 first page: four screens, no sound, no output; 0.1.1 side, front, top labels; 0.1.2 drafting layout
 document.getElementById('pageVer').textContent = 'v' + PAGE_VERSION;
 const $ = (id) => document.getElementById(id);
 
