@@ -8,6 +8,7 @@ history.
 |---|---|
 | `control/index.html` | Control page: Thomas's five attractors with sound and afterglow (port of `control/thomas/lorenz_av.py`). Outputs: any piplot machine, including this Etch A Sketch when its Uno is on plotterpi (piplot 0.12.0 `etchatron` driver), or the Uno on this laptop over Web Serial. Served by piplot at http://100.68.139.69:8080/etchatron.html; `control/deploy_to_plotterpi.sh` puts it there |
 | `views/index.html` | Views page: one of the same five attractors as four live screens, looking down x, y and z plus an orthogonal 3D view you drag to turn. Screens only, no sound or machine output. `python -m http.server 8000 --directory views` |
+| `timeline/index.html` | Attractor timeline: 16 entries from Ptolemy's epicycles (about 150 CE) through the pendulum, Watt's governor, van der Pol, Ashby's homeostat and Ueda to Lorenz and after, each live on the same four screens, in ink on paper. Every entry is tested for chaos and calibrated to Lorenz's speed. Screens only for now. `python -m http.server 8000 --directory timeline` |
 | `controller/` | Uno firmware the control page talks to: queued absolute moves, blended slack take-up, position reports. Protocol in the file header |
 | `spiral/` | Slack (backlash) test spiral with ring ladders for amount and blend speed; where X 23 / Y 17, blend 3 came from |
 | `lorenz/` | Standalone Lorenz attractor sketch for an Uno + Protoneer CNC Shield V3 + TMC2209s (step/dir, replaces GRBL) |
