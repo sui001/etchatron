@@ -17,6 +17,8 @@
   (../control/thomas/lorenz_av.py): five attractors mapped into one
   Lorenz-sized box, dt calibrated for equal average speed. One generator,
   100 steps a second, every step goes to all four screens.
+  Two sets: corrected (RK4, chaotic settings, smooth trail; the default)
+  and Thomas's originals exactly as written.
 
   Screens only: no sound, no machine output. Serve it with
     python -m http.server 8000 --directory views
@@ -69,6 +71,10 @@ canvas { width: 100%; aspect-ratio: 1; background: #000; border-radius: 8px; dis
 
 <div class="controls">
   <div class="attractors" id="attractors"></div>
+  <div class="attractors" id="sets">
+    <button data-set="corrected" title="RK4, chaotic settings, every substep drawn">Corrected</button>
+    <button data-set="original" title="lorenz_av.py as written: Euler steps, Thomas's settings">Thomas's originals</button>
+  </div>
   <button id="btnPlay" class="primary">Pause</button>
   <button id="btnRestart">New start</button>
   <div class="spacer"></div>
@@ -87,7 +93,7 @@ canvas { width: 100%; aspect-ratio: 1; background: #000; border-radius: 8px; dis
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.1.2';   // 0.1.0 first page: four screens, no sound, no output; 0.1.1 side, front, top labels; 0.1.2 drafting layout
+const PAGE_VERSION = '0.2.0';   // 0.1.0 first page: four screens, no sound, no output; 0.1.1 side, front, top labels; 0.1.2 drafting layout; 0.2.0 corrected set (RK4, chaotic Thomas and Halvorsen, smooth trail), originals selectable
 document.getElementById('pageVer').textContent = 'v' + PAGE_VERSION;
 const $ = (id) => document.getElementById(id);
 
@@ -105,7 +111,9 @@ const dAizawa = (x, y, z) => { const a = 0.95, ab = 0.7, c = 0.6, d = 3.5, e = 0
 const dHalvorsen = (x, y, z) => { const a = 1.89;
   return [-a * x - 4 * y - 4 * z - y * y, -a * y - 4 * z - 4 * x - z * z, -a * z - 4 * x - 4 * y - x * x]; };
 
-const ATTRACTORS = [
+// Thomas's originals, exactly as lorenz_av.py and the control page run
+// them: one Euler step per 10 ms block.
+const ORIGINAL = [
   { name: 'Lorenz',    d: dLorenz,    dt: 0.01000, sub: 1, start: [0, 1, 1.05], ranges: TARGET },
   { name: 'Rössler',   d: dRossler,   dt: 0.04208, sub: 1, start: [1.1125, -6.1135, 0.0360],
     ranges: [[-9.62, 12.79], [-11.81, 8.03], [0.01, 38.81]] },
@@ -116,6 +124,42 @@ const ATTRACTORS = [
   { name: 'Halvorsen', d: dHalvorsen, dt: 0.00878, sub: 1, start: [-5.5514, -2.2521, 0.7790],
     ranges: [[-12.58, 6.51], [-13.32, 6.42], [-12.95, 6.26]] },
 ];
+
+// Corrected (Sui, 23 Oct). Tested by nudging the start by 1e-9 and timing
+// how long the copy takes to drift away: as written, only Lorenz is chaotic.
+// Euler's error snaps Rössler onto a closed loop and damps Aizawa, and
+// Halvorsen a = 1.89 and Thomas b = 0.208186 are periodic windows whatever
+// the stepping. So here: RK4 in SUBS substeps per step, Halvorsen a = 1.4
+// and Thomas b = 0.185 (chaotic from five jittered starts out of five; 0.19
+// is another window). Ranges are min/max over 4000 time units of RK4, dt
+// gives each the average speed Lorenz has in the TARGET box at dt 0.01, as
+// lorenz_av.py's calibration does. Every substep is drawn, so the trail is
+// the curve itself, not chords between steps.
+const SUBS = 6;
+const dThomas185 = (x, y, z) => { const b = 0.185;
+  return [Math.sin(y) - b * x, Math.sin(z) - b * y, Math.sin(x) - b * z]; };
+const dHalvorsen14 = (x, y, z) => { const a = 1.4;
+  return [-a * x - 4 * y - 4 * z - y * y, -a * y - 4 * z - 4 * x - z * z, -a * z - 4 * x - 4 * y - x * x]; };
+const CORRECTED = [
+  { name: 'Lorenz',    d: dLorenz,      dt: 0.01000, rk: true, start: [0, 1, 1.05], ranges: TARGET },
+  { name: 'Rössler',   d: dRossler,     dt: 0.04771, rk: true, start: [7.7202, -8.5294, 0.1526],
+    ranges: [[-9.11, 11.43], [-10.79, 7.84], [0.01, 22.85]] },
+  { name: 'Thomas',    d: dThomas185,   dt: 0.23003, rk: true, start: [0.1968, -0.8232, 0.4731],
+    ranges: [[-4.16, 4.16], [-4.16, 4.16], [-4.16, 4.15]] },
+  { name: 'Aizawa',    d: dAizawa,      dt: 0.02294, rk: true, start: [-1.0862, -0.3977, 1.3862],
+    ranges: [[-1.50, 1.49], [-1.45, 1.53], [-0.37, 1.85]] },
+  { name: 'Halvorsen', d: dHalvorsen14, dt: 0.01029, rk: true, start: [1.4469, -6.4370, -4.4553],
+    ranges: [[-13.32, 6.36], [-13.32, 6.36], [-13.32, 6.36]] },
+];
+let ATTRACTORS = CORRECTED;
+
+function rk4(d, r, h) {
+  const k1 = d(...r);
+  const k2 = d(...r.map((v, i) => v + k1[i] * h / 2));
+  const k3 = d(...r.map((v, i) => v + k2[i] * h / 2));
+  const k4 = d(...r.map((v, i) => v + k3[i] * h));
+  return r.map((v, i) => v + (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]) * h / 6);
+}
 
 class Gen {
   constructor(index) {
@@ -129,16 +173,23 @@ class Gen {
     const jy = (a.ranges[1][1] - a.ranges[1][0]) / 50, jz = (a.ranges[2][1] - a.ranges[2][0]) / 53;
     const r = () => (Math.random() * 2 - 1) * START_JITTER;
     this.r = [a.start[0], a.start[1] + r() * jy, a.start[2] + r() * jz];
-    this.startText = `${a.name}: y = ${this.r[1].toFixed(9)}, z = ${this.r[2].toFixed(9)}`;
+    this.startText = `${a.name}${a.rk ? '' : ' (as written)'}: y = ${this.r[1].toFixed(9)}, z = ${this.r[2].toFixed(9)}`;
   }
+  // one step = 10 ms; returns the canonical points to draw for it
   step() {
+    if (this.a.rk) {
+      const h = this.a.dt / SUBS, out = [];
+      for (let i = 0; i < SUBS; i++) { this.r = rk4(this.a.d, this.r, h); out.push(this.canon()); }
+      this.steps++;
+      return out;
+    }
     const h = this.a.dt / this.a.sub;
     for (let i = 0; i < this.a.sub; i++) {
       const [dx, dy, dz] = this.a.d(...this.r);
       this.r[0] += dx * h; this.r[1] += dy * h; this.r[2] += dz * h;
     }
     this.steps++;
-    return this.canon();
+    return [this.canon()];
   }
   canon() { return this.r.map((v, i) => v * this.scale[i] + this.offset[i]); }
 }
@@ -159,7 +210,7 @@ class Gen {
 // a small test canvas does not work: Chrome keeps small canvases on the CPU,
 // which truncates and fades to black.)
 const FRAME_MS = 1000 / 60;
-const HIST_MAX = 30000;                                // 5 minutes of points for a rebuild
+const HIST_MAX = 30000 * SUBS;                         // 5 minutes of points for a rebuild
 const GAIN_LO = 0.17, GAIN_HI = 0.60, DIM = [80, 150, 40], HOT = [225, 255, 110];
 const OBS = [1.177, 24.787, 27.280];                   // Thomas's listener, kept for brightness
 const gainOf = (p) => 0.03 + Math.hypot(OBS[0] - p[0], OBS[1] - p[1], OBS[2] - p[2]) / 92;
@@ -190,12 +241,13 @@ const faded = (c, frames) => {
   return c.map((v, ch) => row[4 * v + ch]);
 };
 
-// history: { p, t, c, k, brk } = point, time played, colour, loudness, no line into it
+// history: { p, t, c, k, brk, st } = point, time played, colour, loudness,
+// no line into it, last point of its step
 const hist = [];
 let drawnTo = 0;                                       // hist[drawnTo..] not yet on the trails
-function addPoint(p, t, brk) {
+function addPoint(p, t, brk, st) {
   const k = loud(gainOf(p));
-  hist.push({ p, t, k, brk, c: DIM.map((a, i) => Math.round(a + (HOT[i] - a) * k)) });
+  hist.push({ p, t, k, brk, st, c: DIM.map((a, i) => Math.round(a + (HOT[i] - a) * k)) });
 }
 
 // -------------------------------------------------------------- the views
@@ -240,22 +292,27 @@ function segment(t, a, b) {
 }
 
 // The whole trail again from history, at each point's faded colour. Segments
-// of one colour share a path: most of a long history is the stalled ghost.
+// of one colour share a path: most of a long history is the stalled ghost,
+// and there only step ends are used, one point in SUBS.
 function rebuild(v, now) {
   const t = v.tx, n = v.W * SS, groups = new Map();
   t.fillStyle = '#000'; t.fillRect(0, 0, n, n);
-  let prev = null;
+  let prev = null, brk = false;
+  const ghost = DECAY.length - 1;
   for (let i = 0; i < hist.length; i++) {
-    const h = hist[i], s = v.proj(h.p, v.W);
-    if (prev && !h.brk) {
-      const c = faded(h.c, (now - h.t) / FRAME_MS);
+    const h = hist[i], age = (now - h.t) / FRAME_MS;
+    brk = brk || h.brk;
+    if (!h.st && age >= ghost) continue;
+    const s = v.proj(h.p, v.W);
+    if (prev && !brk) {
+      const c = faded(h.c, age);
       if (c[0] || c[1] || c[2]) {
         const key = `rgb(${c})`;
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(prev, s);
       }
     }
-    prev = s;
+    prev = s; brk = false;
   }
   t.lineCap = 'round'; t.lineWidth = 2 * SS;
   for (const [key, segs] of groups) {
@@ -333,7 +390,7 @@ function drawAxes(v) {
 
 // -------------------------------------------------------------- the clock
 // 100 steps a second on the wall clock, as the control page's 10 ms audio
-// block. A tab left in the background skips ahead rather than racing.
+// block; a corrected step's substeps are spread across its 10 ms. A tab left in the background skips ahead rather than racing.
 const play = { gen: null, paused: false, t0: 0, n: 0, brk: true };
 function rebase() { play.t0 = performance.now(); play.n = 0; }
 
@@ -342,8 +399,9 @@ function advance(now) {
   const due = Math.floor((now - play.t0) / 10);
   if (due - play.n > 300) play.n = due - 300;
   while (play.n < due) {
+    const pts = play.gen.step(), t = play.t0 + play.n * 10;
     play.n++;
-    addPoint(play.gen.step(), play.t0 + play.n * 10, play.brk);
+    pts.forEach((p, i) => addPoint(p, t + 10 * (i + 1) / pts.length, play.brk && i === 0, i === pts.length - 1));
     play.brk = false;
   }
 }
@@ -380,10 +438,17 @@ $('btnPlay').onclick = () => {
   $('btnPlay').textContent = play.paused ? 'Play' : 'Pause';
 };
 $('btnRestart').onclick = newGen;
+function selectSet(name) {
+  ATTRACTORS = name === 'original' ? ORIGINAL : CORRECTED;
+  [...$('sets').children].forEach((b) => b.classList.toggle('active', b.dataset.set === name));
+  newGen();
+}
+[...$('sets').children].forEach((b) => { b.onclick = () => selectSet(b.dataset.set); });
 document.addEventListener('keydown', (e) => {
   if (e.key >= '1' && e.key <= '5') selectAttractor(+e.key - 1);
 });
 
+[...$('sets').children][0].classList.add('active');
 selectAttractor(0);
 rebase();
 requestAnimationFrame(frame);
