@@ -54,7 +54,9 @@ same time is fine and is how the page talks to the Uno.
 
    (on macOS: `python3 -m http.server 8000`). Leave it running.
 3. In Chrome or Edge open **http://localhost:8000/control/** (keep the slash at the end).
-   The version is shown next to the title.
+   The version is shown next to the title and in the bottom-right corner
+   (with the package's `VERSION`). If a yellow bar says the page has been
+   updated, click it to reload.
 4. Click **Connect Uno** and pick the Arduino Uno from the list
    (Windows: a COM port; macOS: `cu.usbmodem...`). The log shows
    `=== Etchatron controller v0.2.0 ===`. A line `noise 3 X - Y -` is

@@ -113,7 +113,7 @@ canvas { width: 100%; aspect-ratio: 1; background: var(--paper); border-radius: 
 <script src="../lib/timeline.js"></script>
 <script>
 'use strict';
-const PAGE_VERSION = '0.1.1';   // 0.1.0 first page: 16 entries, four screens, light theme; 0.1.1 entries moved to ../lib/timeline.js, shared with the control page
+const PAGE_VERSION = '0.2.0';   // 0.1.0 first page: 16 entries, four screens, light theme; 0.1.1 entries moved to ../lib/timeline.js, shared with the control page; 0.2.0 version tag in the corner, reload notice when the served page changes
 document.getElementById('pageVer').textContent = 'v' + PAGE_VERSION;
 const $ = (id) => document.getElementById(id);
 
@@ -396,6 +396,35 @@ window.addEventListener('resize', drawTimeline);
 select(ENTRIES.findIndex((e) => e.id === 'lorenz'));
 rebase();
 requestAnimationFrame(frame);
+</script>
+<div id="verTag" style="position:fixed;right:8px;bottom:6px;font:11px system-ui,sans-serif;color:#8a887f;z-index:50;pointer-events:none"></div>
+<div id="verNew" hidden style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:60;white-space:nowrap;box-shadow:0 2px 10px rgba(0,0,0,.4);background:#8a5a00;color:#fff;padding:10px 16px;border-radius:6px;font:15px system-ui,sans-serif;cursor:pointer">
+  This page has been updated on the computer serving it. <b><u>Reload this page</u></b> to use it.</div>
+<script>
+// Which version this is (corner tag: page version, plus the package's VERSION
+// file when there is one), and a nudge when the served copy changes under an
+// open page. A static server has no version API, so this re-reads the page
+// itself (and the files it loads) and compares them with what it first saw.
+(() => {
+  const NAME = 'timeline', ALSO = ['../lib/timeline.js'];
+  const tag = document.getElementById('verTag'), nw = document.getElementById('verNew');
+  nw.onclick = () => location.reload();
+  const hash = (s) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; };
+  const get = async (u) => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error(r.status); return r.text(); };
+  let seen = null;
+  async function check() {
+    let page;
+    try { page = await get(location.pathname); } catch (e) { return; }   // file://, or the server is down
+    let pkg = '', key = String(hash(page));
+    try { const v = (await get('../VERSION')).trim(); if (v.length < 80 && !v.includes('<')) pkg = v; } catch (e) {}
+    for (const u of ALSO) { try { key += '/' + hash(await get(u)); } catch (e) {} }
+    key += '/' + pkg;
+    const m = page.match(/PAGE_VERSION = '([^']+)'/), now = m ? m[1] : '?';
+    if (seen === null) { seen = key; tag.textContent = `${NAME} v${PAGE_VERSION}` + (pkg ? ` · ${pkg}` : ''); }
+    else if (key !== seen) { nw.hidden = false; tag.textContent = `${NAME} v${now} on the server (this page is older)`; }
+  }
+  check(); setInterval(check, 30000);
+})();
 </script>
 </body>
 </html>
