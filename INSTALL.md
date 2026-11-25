@@ -16,8 +16,8 @@ Source and updates: https://github.com/sui001/etchatron
 | Part | Notes |
 |---|---|
 | Arduino Uno + Protoneer CNC Shield V3 | Under the black fan cover. Already flashed with the Etchatron controller firmware (v0.2.0), so it is ready to use |
-| 2 x BTT TMC2209 stepper drivers | On the shield, X and Y slots. All three microstep jumpers under each are fitted (1/16 step). Leave them as they are |
-| 2 x NEMA17 motors | 20-tooth GT2 pulleys, belts to a 60-tooth pulley pushed over each Etch A Sketch knob (3:1) |
+| 2 x BTT TMC2209 stepper drivers | On the shield, X and Y slots. All three microstep jumpers under each are fitted (1/16 step). Leave them as they are. Current set to **Vref 0.8 V** (see below) |
+| 2 x NEMA17 motors (Creality 42-40, about 1 A) | 20-tooth GT2 pulleys, belts to a 60-tooth pulley pushed over each Etch A Sketch knob (3:1) |
 | Left knob = X (horizontal), right knob = Y (vertical) | |
 | USB cable | Uno to your computer |
 | 12 V supply, at least 2 A | Plugs into the Uno's barrel jack |
@@ -30,6 +30,16 @@ same time is fine and is how the page talks to the Uno.
 - Use a centre-positive 12 V supply of 2 A or more. A reversed supply will
   destroy the stepper drivers (the bypass goes around the Uno's protection).
 - Do not plug or unplug the motor cables while the 12 V is on.
+
+**Motor current.** Each driver's current is set by its small potentiometer:
+**Vref 0.8 V** (about 0.57 A RMS; on these BTT drivers I_RMS ≈ Vref / 1.41).
+Set 25 Nov 2026; the motors run only slightly warm. New drivers come at about
+1.2 V, which makes these motors hot, so set any replacement driver to 0.8 V:
+12 V and USB on, multimeter black probe on the shield's GND, red probe on the
+pot's metal top, turn the pot an eighth of a turn at a time. If a drawing
+skips steps, go up to 0.9-1.0 V; don't go past about 1.1 V.
+The third jumper keeps the motors at full current whenever they are on, even
+standing still, so switch them off (**Motors on/off**) between drawings.
 - If the motors don't hold when switched on, check first that the barrel plug
   hasn't fallen out.
 
@@ -126,6 +136,7 @@ Reflash `controller/` to go back to the page.
 | "Web Serial not available" | Use Chrome or Edge, and open `http://localhost:8000/control/`, not the file |
 | Page loads but attractor list is empty / errors about `timeline.js` | The server was started inside `control/`. Start it in the top folder |
 | Motors don't hold when on | 12 V barrel plug out, or supply off, or under 2 A |
-| One axis weak or missing steps | Supply current limit too low (needs 2 A+) |
+| One axis weak or missing steps | Supply current limit too low (needs 2 A+); or that driver's Vref below 0.8 V |
+| Motors hot (too hot to keep a finger on) | Vref too high: set 0.8 V. Motors left on between drawings |
 | Drawing drifts or runs into an edge | Stylus was not centred at Zero; re-centre by hand with motors off, Zero here |
 | Notches or flats where lines reverse | Slack settings; see `spiral/` for the test that set them |

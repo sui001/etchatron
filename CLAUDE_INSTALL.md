@@ -51,6 +51,9 @@ This file adds what an agent needs.
    `noise 3 X - Y -` is **expected**: all three microstep jumpers are fitted on
    both drivers, which ties the TMC2209 UART pin high, so the noise-level
    feature is off and both axes run at 1/16. Don't try to "fix" it.
+   Current is on each driver's Vref pot, set to 0.8 V (INSTALL.md, "Motor
+   current"); if motors run hot or a driver was replaced, ask the person to
+   check it with a multimeter.
    Send a lone newline before your first command: leftover boot bytes can make
    the first line answer `err ?`.
    With pyserial: `python -m pip install pyserial`, then a few lines of Python;
