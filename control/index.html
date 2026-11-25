@@ -13,17 +13,17 @@
   On plotterpi the deploy script inlines that file into etchatron.html.
 
   The page does the thinking, controller/controller.ino does the moving.
-  Attractors and sound are a port of Thomas Fischer's lorenz_av.py
-  (thomas/lorenz_av.py): five attractors mapped into one Lorenz-sized box,
+  Attractors and sound are a port of Prof. Thomas Fischer's lorenz_av.py
+  (fischer/lorenz_av.py): five attractors mapped into one Lorenz-sized box,
   Doppler-shifted harmonic tone, distance gain, level + interaural-time
   panning, Lloyd's-mirror floor reflection, elevation brightness, and the
   firefly afterglow trail.
   Three attractor sets: corrected (RK4, chaotic settings; the default),
-  Thomas's originals exactly as written, and the timeline's 16 entries,
+  Prof. Fischer's originals exactly as written, and the timeline's 16 entries,
   Ptolemy to Halvorsen (each measured the first time it is picked).
 
   Two modes:
-    Screen  Thomas's piece as written: one attractor step per 10 ms audio
+    Screen  Prof. Fischer's piece as written: one attractor step per 10 ms audio
             block, real time, screen and sound only.
     Draw    the Etch A Sketch sets the pace. Steps go to the Uno as moves;
             the sound and the trail follow the stylus position it reports,
@@ -120,14 +120,14 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
 </header>
 
 <main>
-  <!-- left: Thomas's audiovisual attractor -->
+  <!-- left: Prof. Fischer's audiovisual attractor -->
   <section>
     <h2>Attractor</h2>
     <canvas id="av" width="450" height="752"></canvas>
     <div class="attractors" id="attractors"></div>
     <div class="row" id="sets">
       <button data-set="corrected" class="active" title="RK4, chaotic settings, smooth trail">Corrected</button>
-      <button data-set="original" title="lorenz_av.py as written: Euler steps, Thomas's settings">Thomas's originals</button>
+      <button data-set="original" title="lorenz_av.py as written: Euler steps, Prof. Fischer's settings">Prof. Fischer's originals</button>
       <button data-set="timeline" title="the attractor timeline's 16 entries, Ptolemy to Halvorsen">Timeline</button>
     </div>
     <div id="tlRow" hidden>
@@ -215,7 +215,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
       <section>
         <h2>Settings</h2>
         <label class="f">Scale, knob &deg; per unit <input id="cScale" type="number" value="20" step="1" min="1"></label>
-        <label class="f">Speed, knob &deg;/s (laptop Uno) <input id="cSpeed" type="number" value="60" step="5" min="5" max="250"></label>
+        <label class="f">Speed, knob &deg;/s <input id="cSpeed" type="number" value="60" step="5" min="5" max="250"></label>
         <label class="f">Slack X, &deg; <input id="cSlackX" type="number" value="23" step="1" min="0"></label>
         <label class="f">Slack Y, &deg; <input id="cSlackY" type="number" value="17" step="1" min="0"></label>
         <label class="f">Blend (0 = burst) <input id="cBlend" type="number" value="3" step="1" min="0" max="10"></label>
@@ -239,7 +239,7 @@ label.chk { display: flex; gap: 8px; align-items: center; color: var(--text); fo
 <script src="../lib/timeline.js"></script>
 <script>
 'use strict';
-const PAGE_VERSION = '0.10.1';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first; 0.7.0 a closed tab no longer strands a plotter; 0.8.0 pen speed for plotters, live while drawing; 0.8.1 version bump only (the date edit missed); 0.8.2 label date as day month year; 0.9.0 corrected attractor set (RK4, chaotic Thomas and Halvorsen, smooth trail), Thomas's originals selectable; 0.10.0 the timeline's 16 entries as a third set, from ../lib/timeline.js; 0.10.1 Limit defaults to 550 (measured travel +-830 x +-585 knob deg)
+const PAGE_VERSION = '0.11.0';   // 0.1.0 first page; 0.2.0 rotate 90 tick box + hidden-tab feeding; 0.3.0 output selector (Uno or piplot plotters); 0.3.1 no password when served locally, clearer password prompt; 0.4.0 served by piplot, Etch A Sketch as a piplot machine; 0.4.1 paper view as the curve studio draws it, no guessed home corner; 0.5.0 plotters draw until Stop (piplot sessions); 0.6.0 date / attractor label in a bottom corner, drawn first; 0.7.0 a closed tab no longer strands a plotter; 0.8.0 pen speed for plotters, live while drawing; 0.8.1 version bump only (the date edit missed); 0.8.2 label date as day month year; 0.9.0 corrected attractor set (RK4, chaotic Thomas and Halvorsen, smooth trail), Prof. Fischer's originals selectable; 0.10.0 the timeline's 16 entries as a third set, from ../lib/timeline.js; 0.10.1 Limit defaults to 550 (measured travel +-830 x +-585 knob deg); 0.11.0 plotter outputs only with ?plotters or when piplot serves the page, Prof. Fischer named formally
 document.getElementById('pageVer').textContent = 'control v' + PAGE_VERSION;
 // ------------------------------------------------------------------ constants
 const STEPS_PER_DEG = 200 * 16 * 60 / 20 / 360;     // 26.667, 20T -> 60T, 1/16
@@ -261,7 +261,7 @@ const dAizawa = (x, y, z) => { const a = 0.95, ab = 0.7, c = 0.6, d = 3.5, e = 0
 const dHalvorsen = (x, y, z) => { const a = 1.89;
   return [-a * x - 4 * y - 4 * z - y * y, -a * y - 4 * z - 4 * x - z * z, -a * z - 4 * x - 4 * y - x * x]; };
 
-// Thomas's originals, exactly as lorenz_av.py runs them: one Euler step
+// Prof. Fischer's originals, exactly as lorenz_av.py runs them: one Euler step
 // per 10 ms block.
 const ORIGINAL = [
   { name: 'Lorenz',    d: dLorenz,    dt: 0.01000, sub: 1, start: [0, 1, 1.05], ranges: TARGET },
@@ -377,7 +377,7 @@ class TimelineGen {
 
 // ------------------------------------------------- audio (worklet = the voice)
 // The worklet is a pure synth: it eats one canonical point per 10 ms block
-// from a queue and renders Thomas's voice for it. Whoever feeds the queue
+// from a queue and renders lorenz_av.py's voice for it. Whoever feeds the queue
 // sets the tempo: the attractor itself (Screen) or the stylus (Draw).
 const WORKLET_SRC = `
 const OX = 1.177, OY = 24.787, OZ = 27.280, FREQ = 440;
@@ -789,7 +789,7 @@ function recordStylus() {
 //     loopback, so piplot treats them as visitors and wants the plot password.
 //   http://localhost (served on the laptop): straight to the tailnet address.
 //     piplot sees a tailnet peer and needs no password.
-const PLOTTER_HOSTS = [
+const ALL_PLOTTER_HOSTS = [
   { name: 'plotterpi', https: 'https://plotterpi.tail405153.ts.net', tailnet: 'http://100.68.139.69:8080' },
   { name: 'polarpi', https: 'https://polarpi.tail405153.ts.net', tailnet: 'http://100.80.99.46:8080' },
 ];
@@ -797,6 +797,10 @@ const PLOTTER_HOSTS = [
 //     its own origin, so plotterpi needs nothing special at all.
 const VIA_TAILNET = location.protocol === 'http:';
 const SERVED_BY_PIPLOT = location.pathname.endsWith('/etchatron.html');
+// The plotter network is the builder's own studio: hidden unless piplot
+// serves the page, or the URL asks for it with ?plotters.
+const SHOW_PLOTTERS = SERVED_BY_PIPLOT || new URLSearchParams(location.search).has('plotters');
+const PLOTTER_HOSTS = SHOW_PLOTTERS ? ALL_PLOTTER_HOSTS : [];
 PLOTTER_HOSTS.forEach((h) => { h.base = VIA_TAILNET ? h.tailnet : h.https; });
 if (SERVED_BY_PIPLOT) PLOTTER_HOSTS[0].base = location.origin;
 const outputs = { selected: 'eas', plotters: [], sig: '' };
@@ -824,7 +828,7 @@ function renderOutputs() {
   const easOk = !!(machine && machine.ready);
   const easWhy = easOk ? '' : ('serial' in navigator ? 'not connected: Connect Uno or Simulate machine'
     : 'this copy cannot reach a USB port; Simulate machine still works');
-  const rows = [{ id: 'eas', name: 'Etch A Sketch', kit: machine instanceof SimMachine ? 'simulated Uno' : 'Uno on this laptop',
+  const rows = [{ id: 'eas', name: 'Etch A Sketch', kit: machine instanceof SimMachine ? 'simulated Uno' : 'Uno on this computer',
     ok: easOk, why: easWhy }]
     .concat(outputs.plotters.map((p) => ({ id: p.id, name: p.label ? p.id : p.host.name,
       kit: !p.label ? 'piplot' : p.driver === 'etchatron' ? `Etch A Sketch on the Pi, ±${p.travel[0] / 2} knob °`
@@ -1266,8 +1270,12 @@ function setFw(t) { const f = $('fw'); f.hidden = false; f.className = 'chip on'
 let selected = 0, setName = 'corrected';
 let tlIndex = TIMELINE.ENTRIES.findIndex((e) => e.id === 'lorenz');
 const currentName = () => setName === 'timeline' ? TIMELINE.ENTRIES[tlIndex].name : ATTRACTORS[selected].name;
+// Whose attractor each button is, as a tooltip (Thomas is René Thomas's, 1999).
+const ATTRACTOR_WHO = { Lorenz: 'Edward Lorenz, 1963', 'Rössler': 'Otto Rössler, 1976', Thomas: 'René Thomas, cyclically symmetric, 1999',
+  Aizawa: 'Yoji Aizawa, 1982', Halvorsen: 'Arne Dehli Halvorsen' };
 ATTRACTORS.forEach((a, i) => {
   const b = document.createElement('button'); b.textContent = a.name; b.dataset.i = i;
+  if (ATTRACTOR_WHO[a.name]) b.title = ATTRACTOR_WHO[a.name];
   b.onclick = () => selectAttractor(i); $('attractors').appendChild(b);
 });
 function selectAttractor(i) {

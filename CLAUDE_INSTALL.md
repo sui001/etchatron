@@ -77,7 +77,7 @@ This file adds what an agent needs.
 9. **Open http://localhost:8000/control/** in Chrome or Edge. The header shows
    the page version (0.10.1 or later). Then walk the person through INSTALL.md
    "Running it" from step 4: Connect Uno, Output = "Etch A Sketch, Uno on this
-   laptop", centre by hand with motors off, **Zero here**, clear the screen, Draw.
+   computer", centre by hand with motors off, **Zero here**, clear the screen, Draw.
 
 ## Serial protocol (controller v0.2.0, 115200, one command per line)
 
@@ -108,7 +108,7 @@ Positive X = right, positive Y = up (DIR LOW = clockwise = positive).
 | `lorenz/lorenz.ino` | stand-alone Lorenz sketch, no computer needed |
 | `spiral/` | backlash test that set slack X 23° / Y 17°, blend 3 |
 | `knob/`, `tools/etchatron_knob.py` | printable pulleys and their generator |
-| `control/deploy_to_plotterpi.sh`, piplot rows in the Output list | the builder's own Raspberry Pi plotter network in Canberra; not reachable from here, ignore |
+| `control/fischer/lorenz_av.py` | Prof. Fischer's original script (Python, pygame, sounddevice); the page is a port of it |
 
 ## When reporting back
 

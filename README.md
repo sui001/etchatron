@@ -1,8 +1,7 @@
 # Etchatron
 
-A motorised Etch A Sketch, made for Thomas Fischer (SUSTech). Two steppers
-turn the knobs through GT2 belts. Moved out of gen3d on 19 Oct 2026 with its
-history.
+A motorised Etch A Sketch that draws strange attractors, made for
+Prof. Thomas Fischer (SUSTech). Two steppers turn the knobs through GT2 belts.
 
 ![Etchatron drawing the Lorenz attractor, 25 Nov 2026](photos/etchatron_lorenz_2026-11-25.jpg)
 
@@ -12,7 +11,8 @@ Setting it up on a new computer: [INSTALL.md](INSTALL.md) (people) and [CLAUDE_I
 
 | Path | What it is |
 |---|---|
-| `control/index.html` | Control page: Thomas's five attractors with sound and afterglow (port of `control/thomas/lorenz_av.py`). Outputs: any piplot machine, including this Etch A Sketch when its Uno is on plotterpi (piplot 0.12.0 `etchatron` driver), or the Uno on this laptop over Web Serial. Served by piplot at http://100.68.139.69:8080/etchatron.html; `control/deploy_to_plotterpi.sh` puts it there |
+| `control/index.html` | Control page: Prof. Fischer's five attractors with sound and afterglow, drawn on the Etch A Sketch through the Uno over Web Serial |
+| `control/fischer/lorenz_av.py` | Prof. Fischer's original audiovisual Lorenz script, kept verbatim as the reference for the port |
 | `views/index.html` | Views page: one of the same five attractors as four live screens, looking down x, y and z plus an orthogonal 3D view you drag to turn. Screens only, no sound or machine output. `python -m http.server 8000 --directory views` |
 | `timeline/index.html` | Attractor timeline: 16 entries from Ptolemy's epicycles (about 150 CE) through the pendulum, Watt's governor, van der Pol, Ashby's homeostat and Ueda to Lorenz and after, each live on the same four screens, in ink on paper. Every entry is tested for chaos and calibrated to Lorenz's speed. Screens only for now. Serve the repo root and open `/timeline/` |
 | `controller/` | Uno firmware the control page talks to: queued absolute moves, blended slack take-up, position reports. Protocol in the file header |
@@ -38,3 +38,8 @@ then open http://localhost:8000/control/ in Chrome or Edge. Simulate machine run
 python tools/etchatron_knob.py --over-knob
 python grbl_setup.py --port COM60 --show
 ```
+
+The builder's own studio: the same page can also send drawings to piplot
+plotters on a private network. Those outputs appear only with `?plotters` on
+the URL, or when piplot serves the page (`control/deploy_to_plotterpi.sh`
+puts it there).

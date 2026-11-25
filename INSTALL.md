@@ -59,8 +59,8 @@ same time is fine and is how the page talks to the Uno.
    (Windows: a COM port; macOS: `cu.usbmodem...`). The log shows
    `=== Etchatron controller v0.2.0 ===`. A line `noise 3 X - Y -` is
    normal with these jumpers.
-5. Under **Output**, choose **Etch A Sketch, Uno on this laptop**. The other
-   rows are Sui's plotters in Canberra and will be greyed out; ignore them.
+5. Under **Output**, **Etch A Sketch, Uno on this computer** turns active once
+   connected. It is the only output.
 6. The motors start **off**. Turn the knobs by hand so the stylus is in the
    middle of the screen, then click **Zero here**.
 7. Clear the screen, pick an attractor and click **Draw on Etch A Sketch**. The motors switch on

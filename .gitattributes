@@ -1,0 +1,3 @@
+# Left out of git archive, so the USB package for the Etchatron owner skips the
+# builder's studio deploy script.
+control/deploy_to_plotterpi.sh export-ignore

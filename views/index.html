@@ -13,12 +13,12 @@
     orthogonal  an axonometric 3D view, drag to turn it
   z is up throughout, so side, front and top are a drafting set.
 
-  Attractors are the control page's port of Thomas Fischer's lorenz_av.py
-  (../control/thomas/lorenz_av.py): five attractors mapped into one
+  Attractors are the control page's port of Prof. Thomas Fischer's lorenz_av.py
+  (../control/fischer/lorenz_av.py): five attractors mapped into one
   Lorenz-sized box, dt calibrated for equal average speed. One generator,
   100 steps a second, every step goes to all four screens.
   Two sets: corrected (RK4, chaotic settings, smooth trail; the default)
-  and Thomas's originals exactly as written.
+  and Prof. Fischer's originals exactly as written.
 
   Screens only: no sound, no machine output. Serve it with
     python -m http.server 8000 --directory views
@@ -73,7 +73,7 @@ canvas { width: 100%; aspect-ratio: 1; background: #000; border-radius: 8px; dis
   <div class="attractors" id="attractors"></div>
   <div class="attractors" id="sets">
     <button data-set="corrected" title="RK4, chaotic settings, every substep drawn">Corrected</button>
-    <button data-set="original" title="lorenz_av.py as written: Euler steps, Thomas's settings">Thomas's originals</button>
+    <button data-set="original" title="lorenz_av.py as written: Euler steps, Prof. Fischer's settings">Prof. Fischer's originals</button>
   </div>
   <button id="btnPlay" class="primary">Pause</button>
   <button id="btnRestart">New start</button>
@@ -93,7 +93,7 @@ canvas { width: 100%; aspect-ratio: 1; background: #000; border-radius: 8px; dis
 
 <script>
 'use strict';
-const PAGE_VERSION = '0.2.0';   // 0.1.0 first page: four screens, no sound, no output; 0.1.1 side, front, top labels; 0.1.2 drafting layout; 0.2.0 corrected set (RK4, chaotic Thomas and Halvorsen, smooth trail), originals selectable
+const PAGE_VERSION = '0.2.1';   // 0.1.0 first page: four screens, no sound, no output; 0.1.1 side, front, top labels; 0.1.2 drafting layout; 0.2.0 corrected set (RK4, chaotic Thomas and Halvorsen, smooth trail), originals selectable; 0.2.1 Prof. Fischer named formally
 document.getElementById('pageVer').textContent = 'v' + PAGE_VERSION;
 const $ = (id) => document.getElementById(id);
 
@@ -111,7 +111,7 @@ const dAizawa = (x, y, z) => { const a = 0.95, ab = 0.7, c = 0.6, d = 3.5, e = 0
 const dHalvorsen = (x, y, z) => { const a = 1.89;
   return [-a * x - 4 * y - 4 * z - y * y, -a * y - 4 * z - 4 * x - z * z, -a * z - 4 * x - 4 * y - x * x]; };
 
-// Thomas's originals, exactly as lorenz_av.py and the control page run
+// Prof. Fischer's originals, exactly as lorenz_av.py and the control page run
 // them: one Euler step per 10 ms block.
 const ORIGINAL = [
   { name: 'Lorenz',    d: dLorenz,    dt: 0.01000, sub: 1, start: [0, 1, 1.05], ranges: TARGET },
@@ -212,7 +212,7 @@ class Gen {
 const FRAME_MS = 1000 / 60;
 const HIST_MAX = 30000 * SUBS;                         // 5 minutes of points for a rebuild
 const GAIN_LO = 0.17, GAIN_HI = 0.60, DIM = [80, 150, 40], HOT = [225, 255, 110];
-const OBS = [1.177, 24.787, 27.280];                   // Thomas's listener, kept for brightness
+const OBS = [1.177, 24.787, 27.280];                   // lorenz_av.py's listener, kept for brightness
 const gainOf = (p) => 0.03 + Math.hypot(OBS[0] - p[0], OBS[1] - p[1], OBS[2] - p[2]) / 92;
 const loud = (g) => Math.max(0, Math.min(1, (g - GAIN_LO) / (GAIN_HI - GAIN_LO)));
 
@@ -418,8 +418,12 @@ function frame(now) {
 
 // --------------------------------------------------------------- controls
 let selected = 0;
+// Whose attractor each button is, as a tooltip (Thomas is René Thomas's, 1999).
+const ATTRACTOR_WHO = { Lorenz: 'Edward Lorenz, 1963', 'Rössler': 'Otto Rössler, 1976', Thomas: 'René Thomas, cyclically symmetric, 1999',
+  Aizawa: 'Yoji Aizawa, 1982', Halvorsen: 'Arne Dehli Halvorsen' };
 ATTRACTORS.forEach((a, i) => {
   const b = document.createElement('button'); b.textContent = a.name; b.dataset.i = i;
+  if (ATTRACTOR_WHO[a.name]) b.title = ATTRACTOR_WHO[a.name];
   b.onclick = () => selectAttractor(i); $('attractors').appendChild(b);
 });
 function newGen() {

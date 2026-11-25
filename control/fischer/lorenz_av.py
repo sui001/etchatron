@@ -16,8 +16,8 @@ If sounddevice (PortAudio) is unavailable, the app still runs silently,
 with the animation driven by the wall clock instead of the audio clock.
 """
 
-# Thomas Fischer's script, as sent to Sui on 21 Oct 2026 ("Re: attractors
-# script"). Kept verbatim as the reference for the port in ../index.html.
+# Prof. Thomas Fischer's script (SUSTech), received 21 Oct 2026. Kept
+# verbatim as the reference for the port in ../index.html.
 
 import math
 import random
